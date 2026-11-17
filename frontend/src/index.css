@@ -6,3 +6,33 @@ body {
   background-color: #f8fafc;
   color: #0f172a;
 }
+/* Courbes concaves Outside-In de l'onglet actif */
+.aceda-curved-active::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: -22px;
+  width: 22px;
+  height: 22px;
+  background: radial-gradient(circle at 0 0, transparent 22px, #f1f5f9 22.5px);
+  pointer-events: none;
+}
+
+.aceda-curved-active::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -22px;
+  width: 22px;
+  height: 22px;
+  background: radial-gradient(circle at 0 100%, transparent 22px, #f1f5f9 22.5px);
+  pointer-events: none;
+}
+
+.aceda-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.aceda-no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
