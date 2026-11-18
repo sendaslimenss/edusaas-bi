@@ -3,22 +3,33 @@ import { GraduationCap, Lock, Mail, Building2, Sparkles, CheckCircle2 } from "lu
 import api from "../api";
 
 const DEMO_ACCOUNTS = [
-  { role: "Directeur (BI)", email: "directeur@tunis.aceda.tn", school: "Tunis" },
-  { role: "Admin École", email: "admin@tunis.aceda.tn", school: "Tunis" },
+  // Campus Tunis (6 profils)
+  { role: "Directeur (BI & Stratégie)", email: "directeur@tunis.aceda.tn", school: "Tunis" },
+  { role: "Administrateur École", email: "admin@tunis.aceda.tn", school: "Tunis" },
   { role: "Enseignant", email: "prof@tunis.aceda.tn", school: "Tunis" },
   { role: "Comptable", email: "comptable@tunis.aceda.tn", school: "Tunis" },
-  { role: "Parent", email: "parent@tunis.aceda.tn", school: "Tunis" },
+  { role: "Parent (Multi-enfants)", email: "parent@tunis.aceda.tn", school: "Tunis" },
   { role: "Élève", email: "eleve@tunis.aceda.tn", school: "Tunis" },
-  { role: "Directeur Nabeul", email: "directeur@nabeul.aceda.tn", school: "Nabeul" },
-  { role: "Comptable Nabeul", email: "comptable@nabeul.aceda.tn", school: "Nabeul" },
+  // Campus Nabeul (6 profils)
+  { role: "Directeur (BI & Stratégie)", email: "directeur@nabeul.aceda.tn", school: "Nabeul" },
+  { role: "Administrateur École", email: "admin@nabeul.aceda.tn", school: "Nabeul" },
+  { role: "Enseignant", email: "prof@nabeul.aceda.tn", school: "Nabeul" },
+  { role: "Comptable", email: "comptable@nabeul.aceda.tn", school: "Nabeul" },
+  { role: "Parent (Multi-enfants)", email: "parent@nabeul.aceda.tn", school: "Nabeul" },
+  { role: "Élève", email: "eleve@nabeul.aceda.tn", school: "Nabeul" },
 ];
 
 export default function Login({ onLoginSuccess }) {
   const [email, setEmail] = useState("directeur@tunis.aceda.tn");
   const [password, setPassword] = useState("Aceda2026!");
+  const [campusFilter, setCampusFilter] = useState("ALL");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [logoError, setLogoError] = useState(false);
+
+  const filteredAccounts = DEMO_ACCOUNTS.filter(
+    (acc) => campusFilter === "ALL" || acc.school === campusFilter
+  );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -38,16 +49,12 @@ export default function Login({ onLoginSuccess }) {
 
   return (
     <div className="relative min-h-screen flex items-center justify-center bg-[radial-gradient(circle_at_15%_15%,#0b356e_0%,#041E42_48%,#020c1b_100%)] p-4 overflow-hidden">
-      {/* Halos lumineux flottants (Or & Bleu Marine) */}
       <div className="pointer-events-none absolute -top-24 -left-24 w-96 h-96 rounded-full bg-amber-400/20 blur-[110px] animate-pulse" />
       <div className="pointer-events-none absolute -bottom-28 -right-20 w-[440px] h-[440px] rounded-full bg-[#0f3f7d]/50 blur-[120px]" />
 
-      {/* Carte principale Glassmorphism */}
       <div className="relative z-10 max-w-4xl w-full grid md:grid-cols-2 rounded-3xl bg-[#041E42]/55 backdrop-blur-2xl border border-amber-400/25 shadow-[0_24px_60px_rgba(2,12,27,0.75)] overflow-hidden">
-        
-        {/* Colonne Gauche : Formulaire de connexion */}
+        {/* Colonne Gauche : Authentification */}
         <div className="p-8 sm:p-10 flex flex-col justify-center">
-          {/* Médaillon Logo ACEDA */}
           <div className="flex items-center gap-4 mb-7">
             {!logoError ? (
               <div className="bg-white/95 px-3.5 py-2.5 rounded-2xl border-2 border-amber-400 shadow-[0_8px_24px_rgba(255,183,3,0.22)] transition-transform duration-300 hover:scale-105">
@@ -129,20 +136,43 @@ export default function Login({ onLoginSuccess }) {
           </form>
         </div>
 
-        {/* Colonne Droite : Comptes de démonstration vitrés */}
+        {/* Colonne Droite : 12 Comptes de démonstration RBAC */}
         <div className="bg-[#020c1b]/45 backdrop-blur-xl p-8 border-t md:border-t-0 md:border-l border-white/10 flex flex-col justify-between">
           <div>
-            <div className="flex items-center gap-2 text-amber-400 font-bold text-sm mb-1.5">
-              <Building2 size={18} />
-              <span>Comptes de démonstration (Multi-Écoles)</span>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                <Building2 size={18} />
+                <span>12 Comptes de Test (RBAC)</span>
+              </div>
             </div>
-            <p className="text-xs text-slate-300/80 mb-4">
-              Cliquez sur un profil pour pré-remplir (Mot de passe :{" "}
-              <strong className="text-amber-300">Aceda2026!</strong>) :
+            <p className="text-xs text-slate-300/80 mb-3">
+              Cliquez sur un profil (Mot de passe : <strong className="text-amber-300">Aceda2026!</strong>) :
             </p>
 
+            {/* Filtre par campus */}
+            <div className="flex gap-1.5 mb-3">
+              {[
+                { id: "ALL", label: "Tous (12)" },
+                { id: "Tunis", label: "Campus Tunis (6)" },
+                { id: "Nabeul", label: "Campus Nabeul (6)" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setCampusFilter(tab.id)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                    campusFilter === tab.id
+                      ? "bg-amber-400 text-[#041E42]"
+                      : "bg-white/5 text-slate-300 hover:bg-white/10"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
             <div className="grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
-              {DEMO_ACCOUNTS.map((acc) => {
+              {filteredAccounts.map((acc) => {
                 const isSelected = email === acc.email;
                 return (
                   <button
@@ -159,9 +189,7 @@ export default function Login({ onLoginSuccess }) {
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      {isSelected && (
-                        <CheckCircle2 size={15} className="text-amber-400 shrink-0" />
-                      )}
+                      {isSelected && <CheckCircle2 size={15} className="text-amber-400 shrink-0" />}
                       <div className="truncate">
                         <div className="font-semibold text-white">{acc.role}</div>
                         <div className="text-slate-400 truncate">{acc.email}</div>
@@ -176,8 +204,8 @@ export default function Login({ onLoginSuccess }) {
             </div>
           </div>
 
-          <p className="text-[11px] text-slate-400/80 mt-5 pt-3 border-t border-white/10">
-            Isolation stricte des données par établissement (Multi-Tenant Cloud).
+          <p className="text-[11px] text-slate-400/80 mt-4 pt-3 border-t border-white/10">
+            Architecture Multi-Tenant isolée par <code className="text-amber-300">school_id</code> sur PostgreSQL Neon.
           </p>
         </div>
       </div>

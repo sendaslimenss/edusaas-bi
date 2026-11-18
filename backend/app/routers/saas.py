@@ -126,13 +126,30 @@ def get_student_bulletin(
     db: Session = Depends(get_db)
 ):
     sid = current_user["school_id"]
+    role = current_user["role"]
+    uid = current_user["id"]
+
+    # Vérification stricte de propriété pour les profils Élève et Parent
+    if role in ("student", "parent"):
+        owner = db.execute(
+            text("""
+                SELECT id FROM students
+                WHERE id = :stid AND school_id = :sid
+                  AND (user_id = :uid OR parent_id = :uid)
+            """),
+            {"stid": student_id, "sid": sid, "uid": uid}
+        ).first()
+        if not owner:
+            raise HTTPException(status_code=403, detail="Accès non autorisé à ce dossier scolaire")
+
     grades = db.execute(
         text("""
-            SELECT g.id, g.trimester, g.score, sub.name AS subject_name, sub.coefficient
+            SELECT g.id, g.trimester, g.score, g.recorded_at,
+                   sub.name AS subject_name, sub.coefficient
             FROM grades g
             JOIN subjects sub ON g.subject_id = sub.id
             WHERE g.school_id = :sid AND g.student_id = :stid
-            ORDER BY g.trimester, sub.name
+            ORDER BY g.recorded_at DESC, g.trimester ASC, sub.name ASC
         """),
         {"sid": sid, "stid": student_id}
     ).mappings().all()
@@ -152,17 +169,24 @@ def get_student_bulletin(
             SELECT id, title, amount_due, amount_paid, due_date, paid_date, status
             FROM payments
             WHERE school_id = :sid AND student_id = :stid
-            ORDER BY due_date ASC
+            ORDER BY due_date DESC
         """),
         {"sid": sid, "stid": student_id}
     ).mappings().all()
 
     return {
-        "grades": [{**dict(g), "score": float(g["score"]), "coefficient": float(g["coefficient"])} for g in grades],
+        "grades": [
+            {
+                **dict(g),
+                "score": float(g["score"]),
+                "coefficient": float(g["coefficient"]),
+                "school_year": "2024-2025" if str(g["recorded_at"]) < "2025-09-01" else "2025-2026",
+            }
+            for g in grades
+        ],
         "attendance": [{**dict(a), "hours_missed": float(a["hours_missed"])} for a in attendance],
         "payments": [{**dict(p), "amount_due": float(p["amount_due"]), "amount_paid": float(p["amount_paid"])} for p in payments]
     }
-
 
 @router.post("/saas/grades")
 def add_grade(
@@ -222,20 +246,19 @@ def list_payments(
     sid = current_user["school_id"]
     rows = db.execute(
         text("""
-            SELECT p.id, p.title, p.amount_due, p.amount_paid, p.due_date, p.status,
+            SELECT p.id, p.title, p.amount_due, p.amount_paid, p.due_date, p.paid_date, p.status,
                    u.full_name AS student_name, up.full_name AS parent_name
             FROM payments p
             JOIN students st ON p.student_id = st.id
             JOIN users u ON st.user_id = u.id
             LEFT JOIN users up ON st.parent_id = up.id
             WHERE p.school_id = :sid
-            ORDER BY CASE WHEN p.status = 'overdue' THEN 1 WHEN p.status = 'partial' THEN 2 ELSE 3 END, p.due_date
-            LIMIT 100
+            ORDER BY CASE WHEN p.status = 'overdue' THEN 1 WHEN p.status = 'partial' THEN 2 ELSE 3 END, p.due_date DESC
+            LIMIT 250
         """),
         {"sid": sid}
     ).mappings().all()
     return [{**dict(r), "amount_due": float(r["amount_due"]), "amount_paid": float(r["amount_paid"])} for r in rows]
-
 
 @router.patch("/saas/payments/{payment_id}/settle")
 def settle_payment(

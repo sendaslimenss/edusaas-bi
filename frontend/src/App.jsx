@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   LayoutDashboard, DollarSign, BookOpen, Clock, ShieldAlert,
   Users, CreditCard, MessageSquare, PlusSquare, LogOut,
-  GraduationCap, ChevronLeft, Menu, X, Building2, Sparkles
+  GraduationCap, ChevronLeft, Menu, X, Building2, Sparkles, TrendingUp, MapPin, UserCheck, Wallet, MessageCircle, BrainCircuit
 } from "lucide-react";
 import Login from "./pages/Login";
 import BiDashboards from "./components/BiDashboards";
@@ -47,13 +47,18 @@ export default function App() {
   if (!user) return <Login onLoginSuccess={handleLogin} />;
 
   const biMenu = [
-    { key: "general", label: "Vue Globale & Capacité", icon: LayoutDashboard, roles: ["director", "admin"] },
-    { key: "financial", label: "BI Financier & Prévisions", icon: DollarSign, roles: ["director", "admin", "accountant"] },
-    { key: "pedagogical", label: "BI Pédagogique", icon: BookOpen, roles: ["director", "admin"] },
-    { key: "attendance", label: "BI Absences & Corrélation", icon: Clock, roles: ["director", "admin"] },
-    { key: "early-warning", label: "Early Warning System", icon: ShieldAlert, badge: "IA", roles: ["director", "admin"] },
+    { key: "general", label: "#1 Vue Globale & Capacité", icon: LayoutDashboard, roles: ["director", "admin"] },
+    { key: "financial", label: "#2 BI Financier & Prévisions", icon: DollarSign, roles: ["director", "admin", "accountant"] },
+    { key: "pedagogical", label: "#3 BI Pédagogique", icon: BookOpen, roles: ["director", "admin"] },
+    { key: "attendance", label: "#4 Absences & Corrélation", icon: Clock, roles: ["director", "admin"] },
+    { key: "demographics", label: "#5 Démographie & Rétention", icon: MapPin, roles: ["director", "admin"] },
+    { key: "teachers", label: "#6 Corps Enseignant & RH", icon: UserCheck, roles: ["director", "admin"] },
+    { key: "recovery", label: "#7 Recouvrement & Crédit", icon: Wallet, roles: ["director", "admin", "accountant"] },
+    { key: "engagement", label: "#8 Engagement Parents", icon: MessageCircle, roles: ["director", "admin"] },
+    { key: "early-warning", label: "#9 Early Warning System", icon: ShieldAlert, badge: "IA", roles: ["director", "admin"] },
+    { key: "strategic", label: "#10 Stratégie & Simulateur", icon: BrainCircuit, badge: "ML", roles: ["director", "admin"] },
   ].filter((item) => item.roles.includes(user.role));
-
+  
   const saasMenu = [
     {
       key: "students",
