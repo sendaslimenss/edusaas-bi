@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="acedaBg" x1="6" y1="4" x2="58" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0b356e" />
+      <stop offset="55%" stop-color="#041e42" />
+      <stop offset="100%" stop-color="#020c1b" />
+    </linearGradient>
+    <linearGradient id="acedaGold" x1="16" y1="14" x2="48" y2="50" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffd166" />
+      <stop offset="50%" stop-color="#ffb703" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="18" fill="url(#acedaBg)" stroke="url(#acedaGold)" stroke-width="2.5" />
+  <!-- Architectural A Apex -->
+  <path d="M32 13L16 49H23.2L32 28.5L40.8 49H48L32 13Z" fill="#ffffff" />
+  <!-- Golden Data Orbit / Crossbar -->
+  <path d="M20 40.5C25.5 37.5 38.5 37.5 44 40.5" stroke="url(#acedaGold)" stroke-width="3.5" stroke-linecap="round" />
+  <!-- Analytics Rising Bars -->
+  <rect x="44" y="23" width="3.5" height="9" rx="1.75" fill="url(#acedaGold)" />
+  <rect x="49.5" y="18" width="3.5" height="14" rx="1.75" fill="#ffd166" />
+</svg>
