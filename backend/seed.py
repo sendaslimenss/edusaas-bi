@@ -81,11 +81,16 @@ LEVEL_TUITION_2025 = {
     "Baccalauréat": 980.00,
 }
 
+import os
+import sys
 
 def reset_database(conn):
+    if os.getenv("CONFIRM_RESET") != "YES" or "--force-reset" not in sys.argv:
+        raise RuntimeError(
+            "Sécurité Data Warehouse : reset_database() est bloqué. "
+            "Exécutez avec CONFIRM_RESET=YES et --force-reset uniquement en développement local."
+        )
     conn.execute(text("TRUNCATE TABLE schools RESTART IDENTITY CASCADE;"))
-
-
 def _generate_year_records(
     school_id: int,
     student_id: int,
@@ -646,11 +651,41 @@ def seed_school(conn, school_name: str, city: str, total_capacity: int):
         f"{len(payments_batch)} échéances financières, {len(messages_batch)} notifications."
     )
 
+def sync_demo_accounts_only(conn):
+    """Vérifie ou restaure uniquement les 12 comptes de démonstration sans altérer les données historiques."""
+    for city, cfg in CAMPUS_CONFIGS.items():
+        school_id = conn.execute(
+            text("SELECT id FROM schools WHERE city = :city ORDER BY id LIMIT 1"),
+            {"city": city},
+        ).scalar()
+        if not school_id:
+            continue
+        for role, (full_name, email) in cfg["demo_staff"].items():
+            conn.execute(
+                text("""
+                    INSERT INTO users (school_id, full_name, email, password_hash, role)
+                    VALUES (:sid, :name, :email, :pwd, :role)
+                    ON CONFLICT (email) DO NOTHING
+                """),
+                {"sid": school_id, "name": full_name, "email": email, "pwd": DEMO_PASSWORD_HASH, "role": role},
+            )
+
 
 if __name__ == "__main__":
-    print("Initialisation du Data Warehouse PostgreSQL ACEDA (2024-2025 & 2025-2026)...")
+    force_reset = "--force-reset" in sys.argv and os.getenv("CONFIRM_RESET") == "YES"
     with engine.begin() as conn:
-        reset_database(conn)
-        seed_school(conn, "Lycée Pilote ACEDA Tunis", "Tunis", 215)
-        seed_school(conn, "Groupe Scolaire ACEDA Nabeul", "Nabeul", 215)
-    print("Base de données PostgreSQL ACEDA peuplée avec succès (12 comptes de test prêts) !")
+        existing_schools = conn.execute(text("SELECT id, name, city FROM schools ORDER BY id")).mappings().all()
+        if existing_schools and not force_reset:
+            print("[PROTECTION ACTIVE] Les établissements existent déjà dans Neon. Aucune donnée supprimée.")
+            sync_demo_accounts_only(conn)
+            for s in existing_schools:
+                g_cnt = conn.execute(text("SELECT COUNT(*) FROM grades WHERE school_id = :sid"), {"sid": s["id"]}).scalar()
+                st_cnt = conn.execute(text("SELECT COUNT(*) FROM students WHERE school_id = :sid"), {"sid": s["id"]}).scalar()
+                print(f"  - {s['name']} ({s['city']}) : {st_cnt} élèves, {g_cnt} notes conservées.")
+        else:
+            if force_reset:
+                print("[RESET AUTORISÉ] Réinitialisation complète demandée...")
+                reset_database(conn)
+            seed_school(conn, "Lycée Pilote ACEDA Tunis", "Tunis", 215)
+            seed_school(conn, "Groupe Scolaire ACEDA Nabeul", "Nabeul", 215)
+            print("Base de données PostgreSQL ACEDA peuplée avec succès !")
