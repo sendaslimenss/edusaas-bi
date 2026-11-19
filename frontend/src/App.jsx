@@ -2,11 +2,43 @@ import { useState } from "react";
 import {
   LayoutDashboard, DollarSign, BookOpen, Clock, ShieldAlert,
   Users, CreditCard, MessageSquare, PlusSquare, LogOut,
-  GraduationCap, ChevronLeft, Menu, X, Building2, Sparkles, TrendingUp, MapPin, UserCheck, Wallet, MessageCircle, BrainCircuit,Calendar, Layers, UserCog
+  ChevronLeft, Menu, X, Building2, Sparkles, MapPin, UserCheck,
+  Wallet, MessageCircle, BrainCircuit, Calendar, Layers, UserCog
 } from "lucide-react";
 import Login from "./pages/Login";
 import BiDashboards from "./components/BiDashboards";
 import SaasWorkspace from "./components/SaasWorkspace";
+
+function AcedaBrandMark({ size = 40 }) {
+  return (
+    <div
+      style={{ width: size, height: size }}
+      className="relative grid place-items-center rounded-2xl bg-gradient-to-br from-[#0e3f80] via-[#041E42] to-[#020c1b] border border-amber-400/60 shadow-[0_8px_22px_rgba(255,183,3,0.28),inset_0_1px_0_rgba(255,255,255,0.25)] shrink-0"
+    >
+      <svg width={size * 0.68} height={size * 0.68} viewBox="0 0 48 48" fill="none">
+        <defs>
+          <linearGradient id="acedaMarkGold" x1="8" y1="8" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#ffd166" />
+            <stop offset="55%" stopColor="#ffb703" />
+            <stop offset="100%" stopColor="#f59e0b" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M24 7L10 39H16.4L24 21.2L31.6 39H38L24 7Z"
+          fill="#ffffff"
+        />
+        <path
+          d="M13.5 32.5C18.8 29.6 29.2 29.6 34.5 32.5"
+          stroke="url(#acedaMarkGold)"
+          strokeWidth="3.2"
+          strokeLinecap="round"
+        />
+        <rect x="34.5" y="16" width="3" height="8" rx="1.5" fill="url(#acedaMarkGold)" />
+        <rect x="39.5" y="11.5" width="3" height="12.5" rx="1.5" fill="#ffd166" />
+      </svg>
+    </div>
+  );
+}
 
 export default function App() {
   const [user, setUser] = useState(() => {
@@ -26,7 +58,6 @@ export default function App() {
   );
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [logoError, setLogoError] = useState(false);
 
   const handleLogin = (loggedUser) => {
     setUser(loggedUser);
@@ -58,7 +89,7 @@ export default function App() {
     { key: "early-warning", label: "#9 Early Warning System", icon: ShieldAlert, badge: "IA", roles: ["director", "admin"] },
     { key: "strategic", label: "#10 Stratégie & Simulateur", icon: BrainCircuit, badge: "ML", roles: ["director", "admin"] },
   ].filter((item) => item.roles.includes(user.role));
-  
+
   const saasMenu = [
     {
       key: "students",
@@ -73,14 +104,15 @@ export default function App() {
     { key: "payments", label: "Gestion Encaissements", icon: CreditCard, roles: ["accountant", "admin", "director"] },
     { key: "messages", label: "Messagerie Parents", icon: MessageSquare, roles: ["admin", "director", "teacher", "accountant", "parent"] },
   ].filter((item) => item.roles.includes(user.role));
+
   return (
     <div className="relative min-h-screen flex flex-col md:flex-row bg-[radial-gradient(circle_at_10%_10%,#0b356e_0%,#041E42_45%,#020c1b_100%)] overflow-x-hidden">
-      {/* Halos lumineux d'arrière-plan (Or & Bleu Marine) */}
+      {/* Halos lumineux d'arrière-plan */}
       <div className="pointer-events-none fixed -top-24 -left-24 w-96 h-96 rounded-full bg-amber-400/20 blur-[110px]" />
       <div className="pointer-events-none fixed bottom-0 left-32 w-80 h-80 rounded-full bg-sky-400/15 blur-[100px]" />
 
       {/* Barre supérieure Mobile Glassmorphism */}
-      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-[#041E42]/80 backdrop-blur-xl border-b border-amber-400/25">
+      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-[#041E42]/85 backdrop-blur-xl border-b border-amber-400/25">
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -90,17 +122,12 @@ export default function App() {
           <Menu size={22} />
         </button>
 
-        <div className="flex items-center gap-2.5 bg-white/95 px-3 py-1.5 rounded-xl border border-amber-400 shadow">
-          {!logoError ? (
-            <img
-              src="/aceda-logo.png"
-              alt="ACEDA"
-              onError={() => setLogoError(true)}
-              className="h-7 w-auto object-contain"
-            />
-          ) : (
-            <span className="font-extrabold text-[#041E42] text-sm">ACEDA</span>
-          )}
+        <div className="flex items-center gap-2.5">
+          <AcedaBrandMark size={34} />
+          <div className="leading-tight">
+            <div className="font-extrabold text-white text-sm tracking-wide">ACEDA</div>
+            <div className="text-[10px] font-semibold text-amber-300">Excellence + Data</div>
+          </div>
         </div>
       </header>
 
@@ -112,47 +139,39 @@ export default function App() {
         />
       )}
 
-      {/* SIDEBAR GLASSMORPHISM AVEC ONGLETS INCURVÉS (OUTSIDE-IN) */}
+      {/* SIDEBAR GLASSMORPHISM ÉLARGIE (320px) */}
       <aside
         className={`fixed md:sticky top-0 left-0 z-50 h-screen flex flex-col justify-between py-5
-          bg-[#041E42]/65 backdrop-blur-2xl border-r border-white/10 shadow-[12px_0_40px_rgba(2,12,27,0.5)]
+          bg-[#041E42]/70 backdrop-blur-2xl border-r border-white/10 shadow-[14px_0_44px_rgba(2,12,27,0.55)]
           transition-all duration-300 ease-out shrink-0
-          ${collapsed ? "md:w-[88px]" : "md:w-[276px]"}
-          w-[276px] ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+          ${collapsed ? "md:w-[96px]" : "md:w-[320px]"}
+          w-[320px] ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
-        {/* Haut de la Sidebar : Logo + Établissement + Menus */}
         <div className="flex flex-col flex-1 min-h-0">
-          {/* Médaillon Logo ACEDA */}
-          <div className="flex items-center justify-between gap-2 px-4 pb-4">
+          {/* En-tête Logo Moderne */}
+          <div className="flex items-center justify-between gap-2.5 px-4 pb-5">
             <div
-              className={`flex items-center gap-2.5 bg-white/95 rounded-2xl border-2 border-amber-400 shadow-[0_8px_22px_rgba(255,183,3,0.2)] transition-all duration-300 hover:scale-[1.02] overflow-hidden ${
-                collapsed ? "p-1.5 mx-auto" : "px-3 py-2"
+              className={`flex items-center gap-3 rounded-2xl bg-white/[0.06] border border-white/15 backdrop-blur-xl shadow-[0_8px_24px_rgba(2,12,27,0.3)] transition-all duration-300 hover:border-amber-400/45 ${
+                collapsed ? "p-2 mx-auto" : "px-3.5 py-2.5 flex-1 min-w-0"
               }`}
             >
-              {!logoError ? (
-                <img
-                  src="/aceda-logo.png"
-                  alt="ACEDA - Academic Excellence + Data"
-                  onError={() => setLogoError(true)}
-                  className={`${collapsed ? "h-9" : "h-11"} w-auto object-contain shrink-0`}
-                />
-              ) : (
-                <div className="p-2 bg-amber-400 rounded-xl text-[#041E42]">
-                  <GraduationCap size={22} />
-                </div>
-              )}
+              <AcedaBrandMark size={collapsed ? 42 : 44} />
 
               {!collapsed && (
-                <div className="leading-tight pr-1">
-                  <div className="font-extrabold text-[#041E42] text-sm tracking-tight">ACEDA</div>
-                  <div className="text-[10px] font-bold text-amber-700 whitespace-nowrap">
+                <div className="leading-tight min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-extrabold text-white text-base tracking-wider">ACEDA</span>
+                    <span className="px-1.5 py-0.5 rounded-md bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[9px] font-extrabold uppercase tracking-wider">
+                      BI
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-medium text-amber-300/90 truncate mt-0.5">
                     Academic Excellence + Data
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Bouton réduire/agrandir (Desktop) */}
             <button
               type="button"
               onClick={() => setCollapsed((prev) => !prev)}
@@ -165,7 +184,6 @@ export default function App() {
               />
             </button>
 
-            {/* Bouton fermer (Mobile) */}
             <button
               type="button"
               onClick={() => setMobileOpen(false)}
@@ -177,7 +195,7 @@ export default function App() {
 
           {/* Pilule Établissement Actif */}
           <div
-            className={`mx-4 mb-5 px-3 py-2.5 rounded-2xl bg-white/5 border border-white/10 flex items-center gap-2.5 ${
+            className={`mx-4 mb-5 px-3.5 py-2.5 rounded-2xl bg-white/[0.06] border border-white/10 flex items-center gap-3 ${
               collapsed ? "justify-center" : ""
             }`}
           >
@@ -208,7 +226,7 @@ export default function App() {
                     return (
                       <div
                         key={item.key}
-                        className={`relative ml-3 rounded-l-[22px] transition-all duration-300 ${
+                        className={`relative ml-3.5 rounded-l-[22px] transition-all duration-300 ${
                           isActive ? "aceda-curved-active bg-[#f1f5f9]" : ""
                         }`}
                       >
@@ -219,7 +237,7 @@ export default function App() {
                           className={`w-full flex items-center gap-3.5 px-4 py-3 text-sm rounded-l-[22px] transition-all duration-300 cursor-pointer group ${
                             isActive
                               ? "text-[#041E42] font-bold"
-                              : "text-slate-200/80 hover:text-white hover:translate-x-1.5 font-medium"
+                              : "text-slate-200/85 hover:text-white hover:translate-x-1.5 font-medium"
                           }`}
                         >
                           <Icon
@@ -263,7 +281,7 @@ export default function App() {
                   return (
                     <div
                       key={item.key}
-                      className={`relative ml-3 rounded-l-[22px] transition-all duration-300 ${
+                      className={`relative ml-3.5 rounded-l-[22px] transition-all duration-300 ${
                         isActive ? "aceda-curved-active bg-[#f1f5f9]" : ""
                       }`}
                     >
@@ -274,7 +292,7 @@ export default function App() {
                         className={`w-full flex items-center gap-3.5 px-4 py-3 text-sm rounded-l-[22px] transition-all duration-300 cursor-pointer group ${
                           isActive
                             ? "text-[#041E42] font-bold"
-                            : "text-slate-200/80 hover:text-white hover:translate-x-1.5 font-medium"
+                            : "text-slate-200/85 hover:text-white hover:translate-x-1.5 font-medium"
                         }`}
                       >
                         <Icon
@@ -295,10 +313,10 @@ export default function App() {
           </div>
         </div>
 
-        {/* Pied de Sidebar : Carte Profil & Déconnexion */}
-        <div className="px-3 pt-3 border-t border-white/10">
-          <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-white/5 border border-white/10">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-amber-500 text-[#041E42] font-extrabold text-sm grid place-items-center shrink-0 shadow">
+        {/* Pied de Sidebar */}
+        <div className="px-4 pt-3 border-t border-white/10">
+          <div className="flex items-center gap-3 p-2.5 rounded-2xl bg-white/[0.06] border border-white/10">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-amber-500 text-[#041E42] font-extrabold text-sm grid place-items-center shrink-0 shadow">
               {(user.full_name || "U")[0].toUpperCase()}
             </div>
             {!collapsed && (
@@ -321,9 +339,8 @@ export default function App() {
         </div>
       </aside>
 
-      {/* ZONE PRINCIPALE FROSTED GLASS (S'EMBOÎTE AVEC L'ONGLET INCURVÉ) */}
-      <main className="relative z-10 flex-1 min-w-0 bg-[#f1f5f9]/95 backdrop-blur-2xl md:my-3 md:mr-3 md:rounded-3xl shadow-[0_20px_50px_rgba(2,12,27,0.45)] border border-white/60 p-5 sm:p-8 overflow-y-auto">
-        {/* En-tête Glassmorphism */}
+      {/* ZONE PRINCIPALE FROSTED GLASS */}
+      <main className="relative z-10 flex-1 min-w-0 bg-[#f1f5f9]/92 backdrop-blur-2xl md:my-3 md:mr-3 md:rounded-3xl shadow-[0_20px_50px_rgba(2,12,27,0.45)] border border-white/70 p-5 sm:p-8 overflow-y-auto">
         <header className="mb-6 p-5 rounded-2xl bg-white/75 backdrop-blur-xl border border-amber-400/30 shadow-sm flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#041E42] text-amber-400 text-[11px] font-bold mb-1.5">
@@ -345,7 +362,6 @@ export default function App() {
           </div>
         </header>
 
-        {/* Contenu dynamique BI ou SaaS */}
         <div className="transition-all duration-300">
           {nav.mode === "bi" ? (
             <BiDashboards activeTab={nav.key} />

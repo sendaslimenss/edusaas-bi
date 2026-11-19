@@ -1,16 +1,17 @@
 import { useState } from "react";
-import { GraduationCap, Lock, Mail, Building2, Sparkles, CheckCircle2 } from "lucide-react";
+import {
+  Lock, Mail, Building2, Sparkles, CheckCircle2, ShieldCheck,
+  ArrowRight, Eye, EyeOff, BarChart3, Layers
+} from "lucide-react";
 import api from "../api";
 
 const DEMO_ACCOUNTS = [
-  // Campus Tunis (6 profils)
   { role: "Directeur (BI & Stratégie)", email: "directeur@tunis.aceda.tn", school: "Tunis" },
   { role: "Administrateur École", email: "admin@tunis.aceda.tn", school: "Tunis" },
   { role: "Enseignant", email: "prof@tunis.aceda.tn", school: "Tunis" },
   { role: "Comptable", email: "comptable@tunis.aceda.tn", school: "Tunis" },
   { role: "Parent (Multi-enfants)", email: "parent@tunis.aceda.tn", school: "Tunis" },
   { role: "Élève", email: "eleve@tunis.aceda.tn", school: "Tunis" },
-  // Campus Nabeul (6 profils)
   { role: "Directeur (BI & Stratégie)", email: "directeur@nabeul.aceda.tn", school: "Nabeul" },
   { role: "Administrateur École", email: "admin@nabeul.aceda.tn", school: "Nabeul" },
   { role: "Enseignant", email: "prof@nabeul.aceda.tn", school: "Nabeul" },
@@ -22,10 +23,10 @@ const DEMO_ACCOUNTS = [
 export default function Login({ onLoginSuccess }) {
   const [email, setEmail] = useState("directeur@tunis.aceda.tn");
   const [password, setPassword] = useState("Aceda2026!");
+  const [showPassword, setShowPassword] = useState(false);
   const [campusFilter, setCampusFilter] = useState("ALL");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [logoError, setLogoError] = useState(false);
 
   const filteredAccounts = DEMO_ACCOUNTS.filter(
     (acc) => campusFilter === "ALL" || acc.school === campusFilter
@@ -41,129 +42,195 @@ export default function Login({ onLoginSuccess }) {
       localStorage.setItem("aceda_user", JSON.stringify(data.user));
       onLoginSuccess(data.user);
     } catch (err) {
-      setError(err.response?.data?.detail || "Erreur de connexion au serveur");
+      setError(err.response?.data?.detail || "Identifiants invalides ou serveur indisponible.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center bg-[radial-gradient(circle_at_15%_15%,#0b356e_0%,#041E42_48%,#020c1b_100%)] p-4 overflow-hidden">
-      <div className="pointer-events-none absolute -top-24 -left-24 w-96 h-96 rounded-full bg-amber-400/20 blur-[110px] animate-pulse" />
-      <div className="pointer-events-none absolute -bottom-28 -right-20 w-[440px] h-[440px] rounded-full bg-[#0f3f7d]/50 blur-[120px]" />
+    <div className="relative min-h-screen flex items-center justify-center bg-[#020c1b] p-4 sm:p-8 overflow-hidden selection:bg-amber-400 selection:text-[#041E42]">
+      {/* Dégradé profond & grille architecturale subtile */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage: `
+            radial-gradient(circle at 14% 18%, rgba(14, 63, 128, 0.55) 0%, transparent 45%),
+            radial-gradient(circle at 86% 82%, rgba(245, 158, 11, 0.16) 0%, transparent 48%),
+            linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px)
+          `,
+          backgroundSize: "100% 100%, 100% 100%, 44px 44px, 44px 44px",
+        }}
+      />
 
-      <div className="relative z-10 max-w-4xl w-full grid md:grid-cols-2 rounded-3xl bg-[#041E42]/55 backdrop-blur-2xl border border-amber-400/25 shadow-[0_24px_60px_rgba(2,12,27,0.75)] overflow-hidden">
-        {/* Colonne Gauche : Authentification */}
-        <div className="p-8 sm:p-10 flex flex-col justify-center">
-          <div className="flex items-center gap-4 mb-7">
-            {!logoError ? (
-              <div className="bg-white/95 px-3.5 py-2.5 rounded-2xl border-2 border-amber-400 shadow-[0_8px_24px_rgba(255,183,3,0.22)] transition-transform duration-300 hover:scale-105">
-                <img
-                  src="/aceda-logo.png"
-                  alt="ACEDA - Academic Excellence + Data"
-                  onError={() => setLogoError(true)}
-                  className="h-14 w-auto object-contain"
-                />
+      {/* Halos lumineux ambiants */}
+      <div className="pointer-events-none absolute -top-28 -left-24 w-[440px] h-[440px] rounded-full bg-amber-400/15 blur-[130px]" />
+      <div className="pointer-events-none absolute -bottom-32 -right-24 w-[500px] h-[500px] rounded-full bg-sky-500/15 blur-[140px]" />
+
+      {/* Conteneur principal Vitre Haute Couture */}
+      <div className="relative z-10 max-w-5xl w-full grid lg:grid-cols-12 rounded-[32px] bg-gradient-to-br from-[#06234b]/80 via-[#041E42]/75 to-[#020c1b]/88 backdrop-blur-3xl border border-white/15 shadow-[0_32px_90px_rgba(0,0,0,0.75),inset_0_1px_0_rgba(255,255,255,0.18)] overflow-hidden">
+        {/* Liseré doré supérieur */}
+        <div className="lg:col-span-12 h-[2px] w-full bg-gradient-to-r from-transparent via-amber-400/80 to-transparent" />
+
+        {/* COLONNE GAUCHE (7 cols) : Identité & Formulaire */}
+        <div className="lg:col-span-7 p-8 sm:p-12 flex flex-col justify-between">
+          <div>
+            {/* En-tête de marque moderne */}
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#0e3f80] via-[#041E42] to-[#020c1b] border border-amber-400/65 shadow-[0_12px_30px_rgba(255,183,3,0.25),inset_0_1px_0_rgba(255,255,255,0.28)] grid place-items-center shrink-0">
+                <svg width="34" height="34" viewBox="0 0 48 48" fill="none">
+                  <path d="M24 7L10 39H16.4L24 21.2L31.6 39H38L24 7Z" fill="#ffffff" />
+                  <path
+                    d="M13.5 32.5C18.8 29.6 29.2 29.6 34.5 32.5"
+                    stroke="#ffb703"
+                    strokeWidth="3.2"
+                    strokeLinecap="round"
+                  />
+                  <rect x="34.5" y="16" width="3" height="8" rx="1.5" fill="#ffb703" />
+                  <rect x="39.5" y="11.5" width="3" height="12.5" rx="1.5" fill="#ffd166" />
+                </svg>
               </div>
-            ) : (
-              <div className="p-3.5 bg-gradient-to-br from-amber-400 to-amber-500 rounded-2xl text-[#020c1b] shadow-lg">
-                <GraduationCap size={30} />
+
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+                    ACEDA <span className="bg-gradient-to-r from-amber-200 via-amber-400 to-amber-500 bg-clip-text text-transparent">Enterprise</span>
+                  </h1>
+                </div>
+                <p className="text-xs font-semibold tracking-widest uppercase text-amber-300/85 flex items-center gap-1.5 mt-1">
+                  <Sparkles size={12} className="text-amber-400" />
+                  Academic Excellence &amp; Decision Intelligence
+                </p>
+              </div>
+            </div>
+
+            <div className="mb-7">
+              <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                Bienvenue sur votre portail exécutif
+              </h2>
+              <p className="text-sm text-slate-300/80 mt-1.5 leading-relaxed">
+                Pilotez vos campus, vos indicateurs financiers et la réussite académique dans un espace unifié et sécurisé.
+              </p>
+            </div>
+
+            {error && (
+              <div className="mb-5 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-400/40 text-rose-200 text-xs font-medium backdrop-blur-md">
+                {error}
               </div>
             )}
 
-            <div>
-              <h1 className="text-2xl font-extrabold tracking-tight text-white">
-                ACEDA <span className="text-amber-400">Cloud</span>
-              </h1>
-              <p className="text-xs font-medium text-amber-300/90 flex items-center gap-1 mt-0.5">
-                <Sparkles size={12} /> Academic Excellence + Data
-              </p>
-            </div>
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-widest text-amber-300/90 mb-2">
+                  Identifiant Professionnel
+                </label>
+                <div className="relative group">
+                  <Mail
+                    className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-amber-400 transition-colors"
+                    size={18}
+                  />
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nom@campus.aceda.tn"
+                    className="w-full pl-12 pr-4 py-3 rounded-2xl bg-[#020c1b]/65 border border-white/15 text-white text-sm placeholder-slate-500 focus:border-amber-400 focus:bg-[#020c1b]/85 focus:ring-4 focus:ring-amber-400/15 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-[11px] font-bold uppercase tracking-widest text-amber-300/90">
+                    Mot de passe
+                  </label>
+                  <span className="text-[11px] text-slate-400">Chiffrement TLS &amp; JWT</span>
+                </div>
+                <div className="relative group">
+                  <Lock
+                    className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-amber-400 transition-colors"
+                    size={18}
+                  />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-12 pr-12 py-3 rounded-2xl bg-[#020c1b]/65 border border-white/15 text-white text-sm placeholder-slate-500 focus:border-amber-400 focus:bg-[#020c1b]/85 focus:ring-4 focus:ring-amber-400/15 outline-none transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-3.5 top-3 p-1 text-slate-400 hover:text-amber-300 transition cursor-pointer"
+                    aria-label="Afficher ou masquer le mot de passe"
+                  >
+                    {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full mt-2 py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 hover:from-amber-200 hover:to-amber-400 text-[#020c1b] font-extrabold text-sm tracking-wide shadow-[0_14px_34px_rgba(245,158,11,0.38)] hover:shadow-[0_18px_40px_rgba(255,183,3,0.52)] transform hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+              >
+                <span>{loading ? "Authentification sécurisée..." : "Accéder à l'espace ACEDA"}</span>
+                {!loading && <ArrowRight size={17} />}
+              </button>
+            </form>
           </div>
 
-          {error && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-500/15 border border-rose-400/40 text-rose-200 text-sm backdrop-blur-md">
-              {error}
+          {/* Bandeau de garanties en bas à gauche */}
+          <div className="mt-8 pt-6 border-t border-white/10 grid grid-cols-3 gap-3 text-[11px] text-slate-300/80">
+            <div className="flex items-center gap-2">
+              <ShieldCheck size={15} className="text-amber-400 shrink-0" />
+              <span>Isolation Multi-Tenant</span>
             </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
-                Email professionnel
-              </label>
-              <div className="relative group">
-                <Mail
-                  className="absolute left-3.5 top-3 text-slate-400 group-focus-within:text-amber-400 transition-colors"
-                  size={18}
-                />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-11 pr-4 py-2.5 rounded-xl bg-[#020c1b]/55 border border-white/15 text-white placeholder-slate-400 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/25 outline-none transition-all"
-                />
-              </div>
+            <div className="flex items-center gap-2">
+              <BarChart3 size={15} className="text-amber-400 shrink-0" />
+              <span>10 Dashboards BI &amp; IA</span>
             </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
-                Mot de passe
-              </label>
-              <div className="relative group">
-                <Lock
-                  className="absolute left-3.5 top-3 text-slate-400 group-focus-within:text-amber-400 transition-colors"
-                  size={18}
-                />
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-11 pr-4 py-2.5 rounded-xl bg-[#020c1b]/55 border border-white/15 text-white placeholder-slate-400 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/25 outline-none transition-all"
-                />
-              </div>
+            <div className="flex items-center gap-2">
+              <Layers size={15} className="text-amber-400 shrink-0" />
+              <span>Contrôle d'accès RBAC</span>
             </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full mt-2 py-3 rounded-xl bg-gradient-to-r from-amber-400 via-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-[#020c1b] font-bold text-sm tracking-wide shadow-[0_10px_25px_rgba(245,158,11,0.35)] hover:shadow-[0_14px_30px_rgba(255,183,3,0.5)] transform hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 disabled:opacity-50 cursor-pointer"
-            >
-              {loading ? "Connexion en cours..." : "Accéder à la plateforme"}
-            </button>
-          </form>
+          </div>
         </div>
 
-        {/* Colonne Droite : 12 Comptes de démonstration RBAC */}
-        <div className="bg-[#020c1b]/45 backdrop-blur-xl p-8 border-t md:border-t-0 md:border-l border-white/10 flex flex-col justify-between">
+        {/* COLONNE DROITE (5 cols) : Sélecteur Rapide de Profils RBAC */}
+        <div className="lg:col-span-5 bg-[#020c1b]/55 backdrop-blur-2xl p-7 sm:p-9 border-t lg:border-t-0 lg:border-l border-white/10 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between gap-2 mb-1.5">
-              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
-                <Building2 size={18} />
-                <span>12 Comptes de Test (RBAC)</span>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-xs uppercase tracking-wider">
+                <Building2 size={16} />
+                <span>Accès Rapide Démo (RBAC)</span>
               </div>
+              <span className="px-2 py-0.5 rounded-full bg-white/10 text-[10px] font-bold text-slate-200">
+                12 Profils
+              </span>
             </div>
-            <p className="text-xs text-slate-300/80 mb-3">
-              Cliquez sur un profil (Mot de passe : <strong className="text-amber-300">Aceda2026!</strong>) :
+
+            <p className="text-xs text-slate-300/75 mb-4">
+              Sélectionnez un rôle pour pré-remplir la session (<code className="text-amber-300 font-semibold">Aceda2026!</code>) :
             </p>
 
-            {/* Filtre par campus */}
-            <div className="flex gap-1.5 mb-3">
+            {/* Onglets Campus vitrés */}
+            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-white/[0.05] border border-white/10 mb-4">
               {[
                 { id: "ALL", label: "Tous (12)" },
-                { id: "Tunis", label: "Campus Tunis (6)" },
-                { id: "Nabeul", label: "Campus Nabeul (6)" },
+                { id: "Tunis", label: "Tunis (6)" },
+                { id: "Nabeul", label: "Nabeul (6)" },
               ].map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
                   onClick={() => setCampusFilter(tab.id)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                  className={`py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                     campusFilter === tab.id
-                      ? "bg-amber-400 text-[#041E42]"
-                      : "bg-white/5 text-slate-300 hover:bg-white/10"
+                      ? "bg-gradient-to-r from-amber-400 to-amber-500 text-[#041E42] shadow"
+                      : "text-slate-300 hover:text-white hover:bg-white/5"
                   }`}
                 >
                   {tab.label}
@@ -171,7 +238,8 @@ export default function Login({ onLoginSuccess }) {
               ))}
             </div>
 
-            <div className="grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
+            {/* Liste vitrée des comptes */}
+            <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
               {filteredAccounts.map((acc) => {
                 const isSelected = email === acc.email;
                 return (
@@ -182,20 +250,34 @@ export default function Login({ onLoginSuccess }) {
                       setEmail(acc.email);
                       setPassword("Aceda2026!");
                     }}
-                    className={`flex items-center justify-between p-2.5 text-left rounded-xl border transition-all duration-200 text-xs cursor-pointer ${
+                    className={`w-full flex items-center justify-between p-3 text-left rounded-2xl border backdrop-blur-md transition-all duration-200 text-xs cursor-pointer ${
                       isSelected
-                        ? "bg-amber-400/15 border-amber-400/60 translate-x-1 shadow-[0_4px_15px_rgba(255,183,3,0.15)]"
-                        : "bg-white/5 hover:bg-white/10 border-white/10 hover:border-amber-400/35 hover:translate-x-1"
+                        ? "bg-gradient-to-r from-amber-400/20 to-amber-500/10 border-amber-400/70 shadow-[0_6px_20px_rgba(255,183,3,0.18)]"
+                        : "bg-white/[0.04] hover:bg-white/[0.09] border-white/10 hover:border-amber-400/40"
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      {isSelected && <CheckCircle2 size={15} className="text-amber-400 shrink-0" />}
+                      <div
+                        className={`w-6 h-6 rounded-lg grid place-items-center shrink-0 ${
+                          isSelected
+                            ? "bg-amber-400 text-[#041E42]"
+                            : "bg-white/10 text-slate-300"
+                        }`}
+                      >
+                        <CheckCircle2 size={14} />
+                      </div>
                       <div className="truncate">
-                        <div className="font-semibold text-white">{acc.role}</div>
-                        <div className="text-slate-400 truncate">{acc.email}</div>
+                        <div className="font-bold text-white">{acc.role}</div>
+                        <div className="text-slate-400 text-[11px] truncate">{acc.email}</div>
                       </div>
                     </div>
-                    <span className="ml-2 shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                    <span
+                      className={`ml-2 shrink-0 px-2.5 py-1 rounded-full text-[10px] font-extrabold tracking-wide ${
+                        acc.school === "Tunis"
+                          ? "bg-sky-400/15 text-sky-200 border border-sky-400/30"
+                          : "bg-amber-400/20 text-amber-300 border border-amber-400/35"
+                      }`}
+                    >
                       {acc.school}
                     </span>
                   </button>
@@ -204,9 +286,10 @@ export default function Login({ onLoginSuccess }) {
             </div>
           </div>
 
-          <p className="text-[11px] text-slate-400/80 mt-4 pt-3 border-t border-white/10">
-            Architecture Multi-Tenant isolée par <code className="text-amber-300">school_id</code> sur PostgreSQL Neon.
-          </p>
+          <div className="mt-5 pt-3.5 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400">
+            <span>Architecture Multi-Campus</span>
+            <code className="text-amber-300/90 font-semibold">school_id • PostgreSQL</code>
+          </div>
         </div>
       </div>
     </div>

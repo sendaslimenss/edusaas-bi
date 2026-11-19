@@ -21,8 +21,8 @@
   /* Typographie & Dimensions */
   --text-main: #f8fafc;
   --text-soft: rgba(226, 232, 240, 0.74);
-  --sidebar-width: 284px;
-  --sidebar-collapsed: 90px;
+--sidebar-width: 320px;
+  --sidebar-collapsed: 96px;
   --curve-radius: 22px;
 
   /* Animations fluides */

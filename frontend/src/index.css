@@ -3,8 +3,113 @@
 @tailwind utilities;
 
 body {
-  background-color: #f8fafc;
+  background-color: #041e42;
+  color: #f8fafc;
+}
+
+/* =========================================================
+   FIX LISIBILITÉ & STYLE GLASSMORPHISM POUR LISTES / SELECTS
+   ========================================================= */
+main {
   color: #0f172a;
+}
+
+/* Champs, listes déroulantes (<select>) et zones de texte */
+main select,
+main input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+main textarea {
+  color: #041e42 !important;
+  background: rgba(255, 255, 255, 0.78) !important;
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  border: 1px solid rgba(4, 30, 66, 0.14) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(4, 30, 66, 0.05);
+  transition: all 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+main select:hover,
+main input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):hover,
+main textarea:hover {
+  background: rgba(255, 255, 255, 0.94) !important;
+  border-color: rgba(245, 158, 11, 0.55) !important;
+}
+
+main select:focus,
+main input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+main textarea:focus {
+  background: #ffffff !important;
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 3px rgba(255, 183, 3, 0.22), 0 6px 18px rgba(4, 30, 66, 0.08) !important;
+}
+
+/* Menu natif des <option> : contraste garanti sur tous les OS */
+main select option {
+  background-color: #041e42 !important;
+  color: #f8fafc !important;
+  font-weight: 600;
+  padding: 10px;
+}
+
+/* Cartes & Listes vitrées modernes dans l'espace principal */
+main .bg-white\/90,
+main .bg-white\/95,
+main .bg-white\/80,
+main .bg-white\/75 {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.76) 0%,
+    rgba(248, 250, 252, 0.62) 100%
+  ) !important;
+  backdrop-filter: blur(22px) saturate(175%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(175%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.88) !important;
+  box-shadow:
+    0 12px 32px -6px rgba(4, 30, 66, 0.09),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
+}
+
+/* Éléments internes des listes (élèves, séances, messages, lignes) */
+main .bg-slate-50,
+main .bg-slate-50\/70 {
+  background: rgba(255, 255, 255, 0.58) !important;
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(4, 30, 66, 0.09) !important;
+  color: #041e42;
+}
+
+/* Tableaux vitrés haute lisibilité */
+main table {
+  color: #0f172a;
+}
+
+main table tbody tr {
+  background: rgba(255, 255, 255, 0.45);
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+main table tbody tr:nth-child(even) {
+  background: rgba(241, 245, 249, 0.55);
+}
+
+main table tbody tr:hover {
+  background: rgba(255, 183, 3, 0.13) !important;
+}
+
+/* Scrollbars fines et élégantes pour les listes */
+main *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+main *::-webkit-scrollbar-track {
+  background: rgba(4, 30, 66, 0.05);
+  border-radius: 999px;
+}
+main *::-webkit-scrollbar-thumb {
+  background: rgba(4, 30, 66, 0.22);
+  border-radius: 999px;
+}
+main *::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.65);
 }
 
 /* Courbes concaves Outside-In de l'onglet actif */
@@ -38,7 +143,6 @@ body {
   scrollbar-width: none;
 }
 
-/* Mise en page propre lors de l'impression / export PDF du bulletin */
 @media print {
   aside,
   header,
