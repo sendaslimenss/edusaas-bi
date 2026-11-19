@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   LayoutDashboard, DollarSign, BookOpen, Clock, ShieldAlert,
   Users, CreditCard, MessageSquare, PlusSquare, LogOut,
-  GraduationCap, ChevronLeft, Menu, X, Building2, Sparkles, TrendingUp, MapPin, UserCheck, Wallet, MessageCircle, BrainCircuit
+  GraduationCap, ChevronLeft, Menu, X, Building2, Sparkles, TrendingUp, MapPin, UserCheck, Wallet, MessageCircle, BrainCircuit,Calendar, Layers, UserCog
 } from "lucide-react";
 import Login from "./pages/Login";
 import BiDashboards from "./components/BiDashboards";
@@ -66,11 +66,13 @@ export default function App() {
       icon: Users,
       roles: ["admin", "director", "teacher", "parent", "student"],
     },
+    { key: "schedules", label: "Emplois du Temps", icon: Calendar, roles: ["admin", "director", "teacher", "parent", "student"] },
     { key: "teacher", label: "Saisie Notes & Appel", icon: PlusSquare, roles: ["teacher", "admin"] },
-    { key: "payments", label: "Gestion Encaissements", icon: CreditCard, roles: ["accountant", "admin"] },
+    { key: "academics", label: "Classes, Matières & RH", icon: Layers, roles: ["admin", "director"] },
+    { key: "users", label: "Administration Comptes", icon: UserCog, roles: ["admin", "director"] },
+    { key: "payments", label: "Gestion Encaissements", icon: CreditCard, roles: ["accountant", "admin", "director"] },
     { key: "messages", label: "Messagerie Parents", icon: MessageSquare, roles: ["admin", "director", "teacher", "accountant", "parent"] },
   ].filter((item) => item.roles.includes(user.role));
-
   return (
     <div className="relative min-h-screen flex flex-col md:flex-row bg-[radial-gradient(circle_at_10%_10%,#0b356e_0%,#041E42_45%,#020c1b_100%)] overflow-x-hidden">
       {/* Halos lumineux d'arrière-plan (Or & Bleu Marine) */}
