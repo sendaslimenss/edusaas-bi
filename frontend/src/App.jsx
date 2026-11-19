@@ -79,8 +79,8 @@ export default function App() {
       <div className="pointer-events-none fixed -top-24 -left-24 w-96 h-96 rounded-full bg-amber-400/20 blur-[110px]" />
       <div className="pointer-events-none fixed bottom-0 left-32 w-80 h-80 rounded-full bg-sky-400/15 blur-[100px]" />
 
-      {/* Barre supérieure Mobile Glassmorphism */}
-      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-[#041E42]/80 backdrop-blur-xl border-b border-amber-400/25">
+  {/* Barre supérieure Mobile Glassmorphism */}
+      <header className="md:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-[#041E42]/90 backdrop-blur-xl border-b border-amber-400/25">
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -90,17 +90,18 @@ export default function App() {
           <Menu size={22} />
         </button>
 
-        <div className="flex items-center gap-2.5 bg-white/95 px-3 py-1.5 rounded-xl border border-amber-400 shadow">
-          {!logoError ? (
-            <img
-              src="/aceda-logo.png"
-              alt="ACEDA"
-              onError={() => setLogoError(true)}
-              className="h-7 w-auto object-contain"
-            />
-          ) : (
-            <span className="font-extrabold text-[#041E42] text-sm">ACEDA</span>
-          )}
+        <div className="flex items-center gap-2.5">
+          <img
+            src="/gemini-svg.svg"
+            alt="ACEDA Enterprise"
+            className="w-8 h-8 object-contain drop-shadow-[0_0_8px_rgba(251,191,36,0.35)]"
+          />
+          <div className="font-extrabold text-sm tracking-tight leading-none">
+            <span className="text-white">ACEDA </span>
+            <span className="bg-gradient-to-r from-amber-300 to-amber-500 bg-clip-text text-transparent">
+              Enterprise
+            </span>
+          </div>
         </div>
       </header>
 
@@ -123,30 +124,36 @@ export default function App() {
         {/* Haut de la Sidebar : Logo + Établissement + Menus */}
         <div className="flex flex-col flex-1 min-h-0">
           {/* Médaillon Logo ACEDA */}
-          <div className={`flex items-center gap-2 px-3 pb-4 ${collapsed ? "flex-col justify-center" : "justify-between"}`}>
+{/* Logo ACEDA Enterprise (Complet ouvert / Icône seule fermé) */}
+          <div
+            className={`flex items-center px-3.5 pb-4 ${
+              collapsed ? "flex-col justify-center gap-2.5" : "justify-between gap-2"
+            }`}
+          >
             <div
-              className={`flex items-center gap-2.5 bg-white/95 rounded-2xl border-2 border-amber-400 shadow-[0_8px_22px_rgba(255,183,3,0.2)] transition-all duration-300 hover:scale-[1.02] overflow-hidden ${
-                collapsed ? "p-1.5 mx-auto" : "px-3 py-2"
+              className={`flex items-center transition-all duration-300 ${
+                collapsed ? "justify-center" : "gap-2.5 min-w-0"
               }`}
             >
-              {!logoError ? (
-                <img
-                  src="/aceda-logo.png"
-                  alt="ACEDA - Academic Excellence + Data"
-                  onError={() => setLogoError(true)}
-                  className={`${collapsed ? "h-9" : "h-11"} w-auto object-contain shrink-0`}
-                />
-              ) : (
-                <div className="p-2 bg-amber-400 rounded-xl text-[#041E42]">
-                  <GraduationCap size={22} />
-                </div>
-              )}
+              <img
+                src="/gemini-svg.svg"
+                alt="ACEDA Enterprise"
+                className={`${
+                  collapsed ? "w-11 h-11" : "w-10 h-10"
+                } object-contain shrink-0 drop-shadow-[0_0_12px_rgba(251,191,36,0.28)] transition-transform duration-300 hover:scale-105`}
+              />
 
               {!collapsed && (
-                <div className="leading-tight pr-1">
-                  <div className="font-extrabold text-[#041E42] text-sm tracking-tight">ACEDA</div>
-                  <div className="text-[10px] font-bold text-amber-700 whitespace-nowrap">
-                    Academic Excellence + Data
+                <div className="min-w-0">
+                  <div className="flex items-baseline gap-1 font-extrabold text-[15px] tracking-tight leading-none">
+                    <span className="text-white">ACEDA</span>
+                    <span className="bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 bg-clip-text text-transparent">
+                      Enterprise
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-1 mt-1 text-[7.5px] font-bold uppercase tracking-[0.04em] text-amber-300/90 leading-[1.15]">
+                    <Sparkles size={10} className="text-amber-400 shrink-0 mt-[1px]" />
+                    <span>ACADEMIC EXCELLENCE &amp; DECISION INTELLIGENCE</span>
                   </div>
                 </div>
               )}
@@ -157,10 +164,10 @@ export default function App() {
               type="button"
               onClick={() => setCollapsed((prev) => !prev)}
               title={collapsed ? "Développer le menu" : "Réduire le menu"}
-              className={`hidden md:grid place-items-center w-9 h-9 rounded-xl bg-amber-400/20 border border-amber-300/50 text-amber-200 hover:bg-amber-400/35 hover:text-white transition-all duration-300 shrink-0 cursor-pointer ${collapsed ? "mx-auto" : ""}`}
+              className="hidden md:grid place-items-center w-7 h-7 rounded-xl bg-amber-400/15 border border-amber-400/30 text-amber-300 hover:bg-amber-400/30 transition-transform duration-300 shrink-0 cursor-pointer"
             >
               <ChevronLeft
-                size={16}
+                size={15}
                 className={`transition-transform duration-300 ${collapsed ? "rotate-180" : ""}`}
               />
             </button>
@@ -174,7 +181,6 @@ export default function App() {
               <X size={20} />
             </button>
           </div>
-
           {/* Pilule Établissement Actif */}
           <div
             className={`mx-4 mb-5 px-3 py-2.5 rounded-2xl bg-white/5 border border-white/10 flex items-center gap-2.5 ${
