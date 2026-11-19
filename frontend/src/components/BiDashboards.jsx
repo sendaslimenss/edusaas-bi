@@ -18,8 +18,8 @@ const PIE_COLORS = ["#041E42", "#FFB703", "#0f3f7d", "#059669", "#e11d48", "#647
 
 export default function BiDashboards({ activeTab }) {
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
+const [loadedTab, setLoadedTab] = useState(null);
+const [loading, setLoading] = useState(true);
   // Filtre interactif pour #9 Early Warning System
   const [ewsFilter, setEwsFilter] = useState("ALL");
 
@@ -29,18 +29,24 @@ export default function BiDashboards({ activeTab }) {
   const [simRecoveryPct, setSimRecoveryPct] = useState(60);
   const [simAbsenteeismDropPct, setSimAbsenteeismDropPct] = useState(25);
 
-  useEffect(() => {
+ useEffect(() => {
     setLoading(true);
-    setData(null);
     setEwsFilter("ALL");
     api
       .get(`/api/bi/${activeTab}`)
-      .then((res) => setData(res.data))
-      .catch((err) => console.error("Erreur BI:", err))
+      .then((res) => {
+        setData(res.data);
+        setLoadedTab(activeTab);
+      })
+      .catch((err) => {
+        console.error("Erreur BI:", err);
+        setData(null);
+        setLoadedTab(activeTab);
+      })
       .finally(() => setLoading(false));
   }, [activeTab]);
 
-  if (loading) {
+  if (loading || loadedTab !== activeTab) {
     return (
       <div className="p-10 rounded-2xl bg-white/80 border border-amber-400/30 flex items-center gap-3 text-[#041E42] font-semibold">
         <div className="w-5 h-5 border-2 border-[#041E42] border-t-amber-400 rounded-full animate-spin" />
@@ -132,14 +138,15 @@ export default function BiDashboards({ activeTab }) {
   // ============================================================================
   // #2. BI FINANCIER & PRÉVISIONS ML (RIDGE REGRESSION)
   // ============================================================================
-  if (activeTab === "financial") {
+if (activeTab === "financial") {
+    const kpis = data?.kpis ?? {};
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Frais Attendus (2 Ans)" value={`${data.kpis.total_expected.toLocaleString()} TND`} icon={<DollarSign className="text-[#041E42]" />} />
-          <KpiCard title="Total Encaissé" value={`${data.kpis.total_collected.toLocaleString()} TND`} icon={<DollarSign className="text-emerald-600" />} />
-          <KpiCard title="Reste à Recouvrer" value={`${data.kpis.total_remaining.toLocaleString()} TND`} icon={<AlertTriangle className="text-rose-600" />} />
-          <KpiCard title="Taux Recouvrement" value={`${data.kpis.recovery_rate}%`} icon={<TrendingUp className="text-amber-600" />} />
+          <KpiCard title="Frais Attendus (2 Ans)" value={`${(kpis.total_expected ?? 0).toLocaleString()} TND`} icon={<DollarSign className="text-[#041E42]" />} />
+          <KpiCard title="Total Encaissé" value={`${(kpis.total_collected ?? 0).toLocaleString()} TND`} icon={<DollarSign className="text-emerald-600" />} />
+          <KpiCard title="Reste à Recouvrer" value={`${(kpis.total_remaining ?? 0).toLocaleString()} TND`} icon={<AlertTriangle className="text-rose-600" />} />
+          <KpiCard title="Taux Recouvrement" value={`${kpis.recovery_rate ?? 0}%`} icon={<TrendingUp className="text-amber-600" />} />
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
@@ -191,17 +198,19 @@ export default function BiDashboards({ activeTab }) {
                 <th className="p-3 rounded-tr-xl">Reste dû</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
-              {data.overdue_parents.map((p, idx) => (
-                <tr key={idx} className="hover:bg-amber-50/40">
-                  <td className="p-3 font-semibold text-[#041E42]">{p.parent_name}<div className="text-xs text-slate-400 font-normal">{p.parent_email}</div></td>
-                  <td className="p-3">{p.student_name}</td>
-                  <td className="p-3">{p.class_name}</td>
-                  <td className="p-3">{p.unpaid_installments}</td>
-                  <td className="p-3 font-bold text-rose-600">{p.unpaid_amount.toLocaleString()} TND</td>
-                </tr>
-              ))}
-            </tbody>
+<tbody>
+  {(data?.top_debtors ?? []).map((row, idx) => (
+    <tr key={idx} className="border-b border-slate-100">
+      <td className="p-3">{row.parent_name}</td>
+      <td className="p-3">{row.student_name}</td>
+      <td className="p-3">{row.class_name}</td>
+      <td className="p-3">{row.installments}</td>
+      <td className="p-3 font-bold text-rose-600">
+        {(row.remaining ?? 0).toLocaleString()} TND
+      </td>
+    </tr>
+  ))}
+</tbody>
           </table>
         </div>
       </div>
@@ -468,8 +477,8 @@ export default function BiDashboards({ activeTab }) {
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Créances Échues (Overdue)" value={`${data.kpis.overdue_balance.toLocaleString()} TND`} icon={<AlertTriangle className="text-rose-600" />} />
-          <KpiCard title="Reliquats Partiels" value={`${data.kpis.partial_balance.toLocaleString()} TND`} icon={<Wallet className="text-amber-600" />} />
+          <KpiCard title="Créances Échues (Overdue)" value={`${(data.kpis.overdue_balance?? 0).toLocaleString()} TND`} icon={<AlertTriangle className="text-rose-600" />} />
+          <KpiCard title="Reliquats Partiels" value={`${(data.kpis.partial_balance?? 0).toLocaleString()} TND`} icon={<Wallet className="text-amber-600" />} />
           <KpiCard title="Tranches Soldées" value={data.kpis.paid_installments} icon={<CheckCircle2 className="text-emerald-600" />} />
           <KpiCard title="Tranches en Souffrance" value={data.kpis.unpaid_installments} icon={<DollarSign className="text-[#041E42]" />} />
         </div>
@@ -709,7 +718,7 @@ export default function BiDashboards({ activeTab }) {
       <div className="space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Effectif Projeté 2026-27" value={`${data.kpis.projected_students_2026} élèves`} subtitle="Régression Linéaire ML" icon={<Users className="text-[#041E42]" />} />
-          <KpiCard title="Recettes Projetées 2026-27" value={`${data.kpis.projected_revenue_2026.toLocaleString()} TND`} subtitle={`Croissance : +${data.kpis.revenue_growth_rate}%`} icon={<DollarSign className="text-emerald-600" />} />
+          <KpiCard title="Recettes Projetées 2026-27" value={`${(data.kpis.projected_revenue_2026?? 0).toLocaleString()} TND`} subtitle={`Croissance : +${data.kpis.revenue_growth_rate}%`} icon={<DollarSign className="text-emerald-600" />} />
           <KpiCard title="Taux Réussite Projeté" value={`${data.kpis.projected_pass_rate_2026}%`} subtitle="Tendance 2024–2027" icon={<TrendingUp className="text-amber-600" />} />
           <KpiCard title="Moteur Prédictif" value="scikit-learn" subtitle="LinearReg + RandomForest" icon={<BrainCircuit className="text-[#0f3f7d]" />} />
         </div>
@@ -798,7 +807,7 @@ export default function BiDashboards({ activeTab }) {
               <div>
                 <div className="flex justify-between text-xs font-semibold mb-1">
                   <span>Taux de recouvrement des impayés existants</span>
-                  <span className="text-amber-300 font-bold">{simRecoveryPct}% (+{Math.round(simRecoveredUnpaid).toLocaleString()} TND)</span>
+                  <span className="text-amber-300 font-bold">{simRecoveryPct}% (+{(Math.round(simRecoveredUnpaid)?? 0).toLocaleString()} TND)</span>
                 </div>
                 <input
                   type="range"
@@ -832,9 +841,9 @@ export default function BiDashboards({ activeTab }) {
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="p-4 rounded-2xl bg-white/10 border border-amber-400/30">
                 <div className="text-xs text-slate-300">Chiffre d'Affaires Simulé</div>
-                <div className="text-2xl font-extrabold text-amber-400 mt-1">{simRevenue.toLocaleString()} TND</div>
+                <div className="text-2xl font-extrabold text-amber-400 mt-1">{(simRevenue?? 0).toLocaleString()} TND</div>
                 <div className={`text-xs font-semibold mt-1 ${revenueDelta >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                  {revenueDelta >= 0 ? `+${revenueDelta.toLocaleString()}` : revenueDelta.toLocaleString()} TND vs actuel
+                  {revenueDelta >= 0 ? `+${(revenueDelta?? 0).toLocaleString()}` : (revenueDelta?? 0).toLocaleString()} TND vs actuel
                 </div>
               </div>
 

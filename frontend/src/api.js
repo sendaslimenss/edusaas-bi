@@ -1,9 +1,9 @@
 import axios from "axios";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const baseURL = (import.meta.env.VITE_API_URL || "https://edusaas-bi.onrender.com").replace(/\/$/, "");
 
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL,
 });
 
 api.interceptors.request.use((config) => {
