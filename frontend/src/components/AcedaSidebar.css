@@ -1,6 +1,6 @@
 :root {
   --sidebar-width: 276px;
-  --sidebar-collapsed: 88px;
+  --sidebar-collapsed: 124px;
   --curve-radius: 22px;
 
   /* Glassmorphism & Surface Tokens */
@@ -168,9 +168,31 @@
 .aceda-sidebar.is-collapsed .aceda-user-meta {
   opacity: 0;
   width: 0;
+  flex: 0;
   pointer-events: none;
   overflow: hidden;
   white-space: nowrap;
+}
+
+/* Remove leftover flex gaps and center collapsed items cleanly */
+.aceda-sidebar.is-collapsed .aceda-brand,
+.aceda-sidebar.is-collapsed .aceda-school-pill,
+.aceda-sidebar.is-collapsed .aceda-user-card,
+.aceda-sidebar.is-collapsed .aceda-nav-item button {
+  gap: 0;
+}
+
+.aceda-sidebar.is-collapsed .aceda-school-pill {
+  justify-content: center;
+}
+
+.aceda-sidebar.is-collapsed .aceda-user-card {
+  justify-content: space-between;
+}
+
+.aceda-sidebar.is-collapsed .aceda-nav-item button {
+  justify-content: center;
+  padding: 12px 0;
 }
 
 /* =========================================================
