@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
-  LineChart, Line, ScatterChart, Scatter, ZAxis, PieChart, Pie, Cell, AreaChart, Area
+  LineChart, Line, ScatterChart, Scatter, ZAxis, PieChart, Pie, Cell, AreaChart, Area,
+  ComposedChart
 } from "recharts";
 import {
   AlertTriangle, TrendingUp, Users, DollarSign, ShieldAlert, BookOpen,
-  MapPin, UserCheck, Wallet, MessageCircle, BrainCircuit, Sliders, CheckCircle2, Sparkles
+  MapPin, UserCheck, Wallet, MessageCircle, BrainCircuit, Sliders, CheckCircle2,
+  Sparkles, Filter, RotateCcw, Download
 } from "lucide-react";
 import api from "../api";
 
@@ -16,10 +18,19 @@ const EMERALD = "#059669";
 const ROSE = "#e11d48";
 const PIE_COLORS = ["#041E42", "#FFB703", "#0f3f7d", "#059669", "#e11d48", "#64748b"];
 
+const YEAR_FILTER_TABS = ["financial", "pedagogical", "attendance", "recovery"];
+const LEVEL_FILTER_TABS = ["general", "financial", "pedagogical", "attendance", "early-warning"];
+
 export default function BiDashboards({ activeTab }) {
   const [data, setData] = useState(null);
-const [loadedTab, setLoadedTab] = useState(null);
-const [loading, setLoading] = useState(true);
+  const [loadedKey, setLoadedKey] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  // Filtres temporels et structurels BI
+  const [schoolYear, setSchoolYear] = useState("ALL");
+  const [trimester, setTrimester] = useState(0);
+  const [levelFilter, setLevelFilter] = useState("ALL");
+
   // Filtre interactif pour #9 Early Warning System
   const [ewsFilter, setEwsFilter] = useState("ALL");
 
@@ -29,36 +40,188 @@ const [loading, setLoading] = useState(true);
   const [simRecoveryPct, setSimRecoveryPct] = useState(60);
   const [simAbsenteeismDropPct, setSimAbsenteeismDropPct] = useState(25);
 
- useEffect(() => {
-    setLoading(true);
+  const effectiveYear =
+    activeTab === "pedagogical" && schoolYear === "ALL" ? "2025-2026" : schoolYear;
+
+  const queryKey = `${activeTab}|${effectiveYear}|${trimester}|${levelFilter}`;
+
+  useEffect(() => {
     setEwsFilter("ALL");
+  }, [activeTab]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+
+    const params = {};
+    if (YEAR_FILTER_TABS.includes(activeTab)) {
+      params.school_year = effectiveYear;
+    }
+    if (activeTab === "pedagogical") {
+      params.trimester = trimester;
+    }
+    if (LEVEL_FILTER_TABS.includes(activeTab)) {
+      params.level = levelFilter;
+    }
+
     api
-      .get(`/api/bi/${activeTab}`)
+      .get(`/api/bi/${activeTab}`, { params })
       .then((res) => {
-        setData(res.data);
-        setLoadedTab(activeTab);
+        if (!cancelled) {
+          setData(res.data);
+          setLoadedKey(queryKey);
+        }
       })
       .catch((err) => {
         console.error("Erreur BI:", err);
-        setData(null);
-        setLoadedTab(activeTab);
+        if (!cancelled) {
+          setData(null);
+          setLoadedKey(queryKey);
+        }
       })
-      .finally(() => setLoading(false));
-  }, [activeTab]);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-  if (loading || loadedTab !== activeTab) {
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, effectiveYear, trimester, levelFilter, queryKey]);
+
+  const showYearFilter = YEAR_FILTER_TABS.includes(activeTab);
+  const showTrimesterFilter = activeTab === "pedagogical";
+  const showLevelFilter = LEVEL_FILTER_TABS.includes(activeTab);
+  const hasFilters = showYearFilter || showTrimesterFilter || showLevelFilter;
+
+  const handleResetFilters = () => {
+    setSchoolYear("ALL");
+    setTrimester(0);
+    setLevelFilter("ALL");
+  };
+
+  const handleExportEwsCsv = (rows) => {
+    const header = [
+      "Eleve",
+      "Classe",
+      "Score_Risque",
+      "Niveau",
+      "Prob_Abandon_IA_Pct",
+      "Moyenne_Ponderee",
+      "Absences_Non_Justifiees_H",
+      "Impayes_TND",
+      "Recommandation",
+    ];
+    const csvLines = [
+      header.join(";"),
+      ...rows.map((st) =>
+        [
+          `"${st.student_name}"`,
+          `"${st.class_name || ""}"`,
+          st.risk_score,
+          st.risk_level,
+          st.dropout_probability,
+          st.avg_grade,
+          st.unjustified_hours,
+          st.unpaid_balance,
+          `"${st.recommendation}"`,
+        ].join(";")
+      ),
+    ];
+    const blob = new Blob(["\uFEFF" + csvLines.join("\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `alerte_precoce_ews_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const renderFilterBar = () => {
+    if (!hasFilters) return null;
     return (
-      <div className="p-10 rounded-2xl bg-white/80 border border-amber-400/30 flex items-center gap-3 text-[#041E42] font-semibold">
-        <div className="w-5 h-5 border-2 border-[#041E42] border-t-amber-400 rounded-full animate-spin" />
-        <span>Calcul des indicateurs analytiques & modèles IA en cours...</span>
+      <div className="bg-white/90 backdrop-blur-md p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs font-extrabold text-[#041E42] uppercase tracking-wider">
+          <Filter size={15} className="text-amber-500" />
+          <span>Filtres Analytiques</span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          {showYearFilter && (
+            <select
+              value={effectiveYear}
+              onChange={(e) => setSchoolYear(e.target.value)}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-[#041E42] outline-none focus:border-amber-400 cursor-pointer"
+            >
+              {activeTab !== "pedagogical" && (
+                <option value="ALL">Toutes les années (2024–2026)</option>
+              )}
+              <option value="2025-2026">Année 2025-2026 (Actuelle)</option>
+              <option value="2024-2025">Année 2024-2025 (N-1)</option>
+            </select>
+          )}
+
+          {showTrimesterFilter && (
+            <select
+              value={trimester}
+              onChange={(e) => setTrimester(Number(e.target.value))}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-[#041E42] outline-none focus:border-amber-400 cursor-pointer"
+            >
+              <option value={0}>Tous les trimestres</option>
+              <option value={1}>Trimestre 1</option>
+              <option value={2}>Trimestre 2</option>
+              <option value={3}>Trimestre 3</option>
+            </select>
+          )}
+
+          {showLevelFilter && (
+            <select
+              value={levelFilter}
+              onChange={(e) => setLevelFilter(e.target.value)}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-[#041E42] outline-none focus:border-amber-400 cursor-pointer"
+            >
+              <option value="ALL">Tous les niveaux</option>
+              <option value="1ère Année">1ère Année</option>
+              <option value="2ème Année">2ème Année</option>
+              <option value="3ème Année">3ème Année</option>
+              <option value="Baccalauréat">Baccalauréat</option>
+            </select>
+          )}
+
+          {(schoolYear !== "ALL" || trimester !== 0 || levelFilter !== "ALL") && (
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-100 text-amber-900 hover:bg-amber-200 text-xs font-bold transition cursor-pointer"
+            >
+              <RotateCcw size={13} /> Réinitialiser
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  if (loading || loadedKey !== queryKey) {
+    return (
+      <div className="space-y-4">
+        {renderFilterBar()}
+        <div className="p-10 rounded-2xl bg-white/80 border border-amber-400/30 flex items-center gap-3 text-[#041E42] font-semibold">
+          <div className="w-5 h-5 border-2 border-[#041E42] border-t-amber-400 rounded-full animate-spin" />
+          <span>Calcul des indicateurs analytiques & modèles IA en cours...</span>
+        </div>
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="p-8 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 font-medium">
-        Impossible de charger les données de ce tableau de bord BI.
+      <div className="space-y-4">
+        {renderFilterBar()}
+        <div className="p-8 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 font-medium">
+          Impossible de charger les données de ce tableau de bord BI.
+        </div>
       </div>
     );
   }
@@ -69,11 +232,33 @@ const [loading, setLoading] = useState(true);
   if (activeTab === "general") {
     return (
       <div className="space-y-6">
+        {renderFilterBar()}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Élèves Actifs" value={data.kpis.total_students} subtitle={`Ratio ${data.kpis.student_teacher_ratio} élèves/prof`} icon={<Users className="text-[#041E42]" />} />
-          <KpiCard title="Corps Enseignant" value={data.kpis.total_teachers} subtitle="Actifs sur le campus" icon={<BookOpen className="text-amber-600" />} />
-          <KpiCard title="Classes Ouvertes" value={data.kpis.total_classes} subtitle={`Capacité : ${data.kpis.total_capacity} places`} icon={<Users className="text-[#0f3f7d]" />} />
-          <KpiCard title="Taux d'Occupation" value={`${data.kpis.global_occupancy_rate}%`} subtitle="Seuil optimal : 75% - 95%" icon={<TrendingUp className="text-emerald-600" />} />
+          <KpiCard
+            title="Élèves Actifs"
+            value={data.kpis.total_students}
+            subtitle={`Ratio ${data.kpis.student_teacher_ratio} élèves/prof`}
+            icon={<Users className="text-[#041E42]" />}
+          />
+          <KpiCard
+            title="Corps Enseignant"
+            value={data.kpis.total_teachers}
+            subtitle="Actifs sur le campus"
+            icon={<BookOpen className="text-amber-600" />}
+          />
+          <KpiCard
+            title="Classes Ouvertes"
+            value={data.kpis.total_classes}
+            subtitle={`Capacité : ${data.kpis.total_capacity} places`}
+            icon={<Users className="text-[#0f3f7d]" />}
+          />
+          <KpiCard
+            title="Taux d'Occupation"
+            value={`${data.kpis.global_occupancy_rate}%`}
+            subtitle="Seuil optimal : 75% - 95%"
+            icon={<TrendingUp className="text-emerald-600" />}
+          />
         </div>
 
         {data.alerts.length > 0 && (
@@ -98,7 +283,9 @@ const [loading, setLoading] = useState(true);
 
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-4">Effectifs Actuels vs Capacité Maximale par Classe</h3>
+            <h3 className="font-bold text-[#041E42] mb-4">
+              Effectifs Actuels vs Capacité Maximale par Classe
+            </h3>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.classes_occupancy}>
@@ -107,8 +294,18 @@ const [loading, setLoading] = useState(true);
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="current_students" name="Effectif actuel" fill={NAVY} radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="max_capacity" name="Capacité max" fill={GOLD} radius={[6, 6, 0, 0]} />
+                  <Bar
+                    dataKey="current_students"
+                    name="Effectif actuel"
+                    fill={NAVY}
+                    radius={[6, 6, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="max_capacity"
+                    name="Capacité max"
+                    fill={GOLD}
+                    radius={[6, 6, 0, 0]}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -119,7 +316,15 @@ const [loading, setLoading] = useState(true);
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={data.level_distribution} dataKey="count" nameKey="level" cx="50%" cy="50%" outerRadius={90} label>
+                  <Pie
+                    data={data.level_distribution}
+                    dataKey="count"
+                    nameKey="level"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={90}
+                    label
+                  >
                     {data.level_distribution.map((_, idx) => (
                       <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
                     ))}
@@ -136,34 +341,85 @@ const [loading, setLoading] = useState(true);
   }
 
   // ============================================================================
-  // #2. BI FINANCIER & PRÉVISIONS ML (RIDGE REGRESSION)
+  // #2. BI FINANCIER & PRÉVISIONS ML (RIDGE REGRESSION + IC 95%)
   // ============================================================================
-if (activeTab === "financial") {
+  if (activeTab === "financial") {
     const kpis = data?.kpis ?? {};
+    const debtors = data?.overdue_parents ?? data?.top_debtors ?? [];
+
     return (
       <div className="space-y-6">
+        {renderFilterBar()}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Frais Attendus (2 Ans)" value={`${(kpis.total_expected ?? 0).toLocaleString()} TND`} icon={<DollarSign className="text-[#041E42]" />} />
-          <KpiCard title="Total Encaissé" value={`${(kpis.total_collected ?? 0).toLocaleString()} TND`} icon={<DollarSign className="text-emerald-600" />} />
-          <KpiCard title="Reste à Recouvrer" value={`${(kpis.total_remaining ?? 0).toLocaleString()} TND`} icon={<AlertTriangle className="text-rose-600" />} />
-          <KpiCard title="Taux Recouvrement" value={`${kpis.recovery_rate ?? 0}%`} icon={<TrendingUp className="text-amber-600" />} />
+          <KpiCard
+            title="Frais Attendus"
+            value={`${(kpis.total_expected ?? 0).toLocaleString()} TND`}
+            subtitle={effectiveYear === "ALL" ? "Cumul 2024–2026" : `Année ${effectiveYear}`}
+            icon={<DollarSign className="text-[#041E42]" />}
+          />
+          <KpiCard
+            title="Total Encaissé"
+            value={`${(kpis.total_collected ?? 0).toLocaleString()} TND`}
+            subtitle="Recettes validées"
+            icon={<DollarSign className="text-emerald-600" />}
+          />
+          <KpiCard
+            title="Reste à Recouvrer"
+            value={`${(kpis.total_remaining ?? 0).toLocaleString()} TND`}
+            subtitle="Échéances impayées/partielles"
+            icon={<AlertTriangle className="text-rose-600" />}
+          />
+          <KpiCard
+            title="Taux Recouvrement"
+            value={`${kpis.recovery_rate ?? 0}%`}
+            subtitle={`Ajustement Ridge R² = ${kpis.model_r2 ?? 0}`}
+            icon={<TrendingUp className="text-amber-600" />}
+          />
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-1">Évolution Mensuelle des Recettes & Prévisions ML (scikit-learn)</h3>
-            <p className="text-xs text-slate-500 mb-4">Série historique 2024–2026 et projection Ridge Regression sur les 3 prochains mois.</p>
+            <h3 className="font-bold text-[#041E42] mb-1">
+              Évolution Mensuelle des Recettes & Prévisions ML (IC 95%)
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Série historique et projection Ridge Regression sur 3 mois avec intervalle de confiance à 95 %.
+            </p>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data.revenue_series}>
+                <ComposedChart data={data.revenue_series}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="revenue" name="Recettes Réelles (TND)" stroke={NAVY} strokeWidth={3} dot={{ r: 4 }} />
-                  <Line type="monotone" dataKey="forecast" name="Prévision ML (TND)" stroke={GOLD} strokeWidth={3} strokeDasharray="6 4" dot={{ r: 5 }} />
-                </LineChart>
+                  <Area
+                    type="monotone"
+                    dataKey="forecast_high"
+                    name="Borne haute IC 95%"
+                    stroke="none"
+                    fill={GOLD}
+                    fillOpacity={0.18}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="revenue"
+                    name="Recettes Réelles (TND)"
+                    stroke={NAVY}
+                    strokeWidth={3}
+                    dot={{ r: 4 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="forecast"
+                    name="Prévision ML (TND)"
+                    stroke={GOLD}
+                    strokeWidth={3}
+                    strokeDasharray="6 4"
+                    dot={{ r: 5 }}
+                  />
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </div>
@@ -187,7 +443,9 @@ if (activeTab === "financial") {
         </div>
 
         <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm overflow-x-auto">
-          <h3 className="font-bold text-[#041E42] mb-4">Top Familles en Retard de Paiement</h3>
+          <h3 className="font-bold text-[#041E42] mb-4">
+            Top Familles en Retard de Paiement ({debtors.length})
+          </h3>
           <table className="w-full text-sm text-left">
             <thead className="bg-[#041E42] text-amber-300 uppercase text-xs">
               <tr>
@@ -198,41 +456,67 @@ if (activeTab === "financial") {
                 <th className="p-3 rounded-tr-xl">Reste dû</th>
               </tr>
             </thead>
-<tbody>
-  {(data?.top_debtors ?? []).map((row, idx) => (
-    <tr key={idx} className="border-b border-slate-100">
-      <td className="p-3">{row.parent_name}</td>
-      <td className="p-3">{row.student_name}</td>
-      <td className="p-3">{row.class_name}</td>
-      <td className="p-3">{row.installments}</td>
-      <td className="p-3 font-bold text-rose-600">
-        {(row.remaining ?? 0).toLocaleString()} TND
-      </td>
-    </tr>
-  ))}
-</tbody>
+            <tbody className="divide-y divide-slate-200">
+              {debtors.map((row, idx) => (
+                <tr key={idx} className="hover:bg-amber-50/40">
+                  <td className="p-3 font-semibold text-[#041E42]">
+                    {row.parent_name}
+                    {row.parent_email && (
+                      <div className="text-[11px] text-slate-400 font-normal">{row.parent_email}</div>
+                    )}
+                  </td>
+                  <td className="p-3">{row.student_name}</td>
+                  <td className="p-3">{row.class_name}</td>
+                  <td className="p-3">{row.unpaid_installments ?? row.installments ?? 1}</td>
+                  <td className="p-3 font-bold text-rose-600">
+                    {(row.unpaid_amount ?? row.remaining ?? 0).toLocaleString()} TND
+                  </td>
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
       </div>
     );
   }
-
-  // ============================================================================
-  // #3. BI PÉDAGOGIQUE & RÉSULTATS
+// ============================================================================
+  // #3. BI PÉDAGOGIQUE & RÉSULTATS (MOYENNES PONDÉRÉES & DISPERSION)
   // ============================================================================
   if (activeTab === "pedagogical") {
     return (
       <div className="space-y-6">
+        {renderFilterBar()}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Moyenne Établissement" value={`${data.kpis.school_average}/20`} icon={<BookOpen className="text-[#041E42]" />} />
-          <KpiCard title="Taux de Réussite" value={`${data.kpis.pass_rate}%`} icon={<TrendingUp className="text-emerald-600" />} />
-          <KpiCard title="Taux d'Échec (<10)" value={`${data.kpis.fail_rate}%`} icon={<AlertTriangle className="text-rose-600" />} />
-          <KpiCard title="Élèves en Difficulté" value={data.kpis.struggling_students_count} icon={<Users className="text-amber-600" />} />
+          <KpiCard
+            title="Moyenne Pondérée"
+            value={`${data.kpis.school_average}/20`}
+            subtitle={`Écart-type σ = ${data.kpis.std_dev ?? 0} pts`}
+            icon={<BookOpen className="text-[#041E42]" />}
+          />
+          <KpiCard
+            title="Taux de Réussite"
+            value={`${data.kpis.pass_rate}%`}
+            subtitle="Moyenne pondérée ≥ 10/20"
+            icon={<TrendingUp className="text-emerald-600" />}
+          />
+          <KpiCard
+            title="Taux d'Échec (<10)"
+            value={`${data.kpis.fail_rate}%`}
+            subtitle="Sous le seuil d'admission"
+            icon={<AlertTriangle className="text-rose-600" />}
+          />
+          <KpiCard
+            title="Élèves en Difficulté"
+            value={data.kpis.struggling_students_count}
+            subtitle="Accompagnement prioritaire"
+            icon={<Users className="text-amber-600" />}
+          />
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
           <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-4">Moyenne Générale par Classe</h3>
+            <h3 className="font-bold text-[#041E42] mb-4">Moyenne Pondérée par Classe</h3>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.by_class} layout="vertical">
@@ -240,14 +524,16 @@ if (activeTab === "financial") {
                   <XAxis type="number" domain={[0, 20]} />
                   <YAxis dataKey="class_name" type="category" width={115} tick={{ fontSize: 11 }} />
                   <Tooltip />
-                  <Bar dataKey="average_score" name="Moyenne /20" fill={NAVY} radius={[0, 6, 6, 0]} />
+                  <Bar dataKey="average_score" name="Moyenne pondérée /20" fill={NAVY} radius={[0, 6, 6, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-4">Trajectoire Longitudinale par Trimestre (2024–2026)</h3>
+            <h3 className="font-bold text-[#041E42] mb-4">
+              Trajectoire Longitudinale par Trimestre (2024–2026)
+            </h3>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={data.by_trimester}>
@@ -255,7 +541,14 @@ if (activeTab === "financial") {
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis domain={[8, 16]} />
                   <Tooltip />
-                  <Line type="monotone" dataKey="average_score" name="Moyenne globale" stroke={GOLD} strokeWidth={3} dot={{ fill: NAVY, r: 5 }} />
+                  <Line
+                    type="monotone"
+                    dataKey="average_score"
+                    name="Moyenne pondérée"
+                    stroke={GOLD}
+                    strokeWidth={3}
+                    dot={{ fill: NAVY, r: 5 }}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -283,7 +576,15 @@ if (activeTab === "financial") {
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={data.mentions_distribution} dataKey="count" nameKey="mention" cx="50%" cy="50%" innerRadius={45} outerRadius={80}>
+                  <Pie
+                    data={data.mentions_distribution}
+                    dataKey="count"
+                    nameKey="mention"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={45}
+                    outerRadius={80}
+                  >
                     {data.mentions_distribution.map((_, idx) => (
                       <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
                     ))}
@@ -305,17 +606,40 @@ if (activeTab === "financial") {
   if (activeTab === "attendance") {
     return (
       <div className="space-y-6">
+        {renderFilterBar()}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Heures Manquées Total" value={`${data.kpis.total_hours}h`} icon={<AlertTriangle className="text-[#041E42]" />} />
-          <KpiCard title="Absences Justifiées" value={`${data.kpis.justified_hours}h`} icon={<Users className="text-emerald-600" />} />
-          <KpiCard title="Non Justifiées" value={`${data.kpis.unjustified_hours}h`} icon={<AlertTriangle className="text-rose-600" />} />
-          <KpiCard title="Corrélation Pearson (r)" value={data.kpis.pearson_correlation} subtitle={`${data.kpis.impact_per_10h} pts / 10h abs.`} icon={<TrendingUp className="text-amber-600" />} />
+          <KpiCard
+            title="Heures Manquées Total"
+            value={`${data.kpis.total_hours}h`}
+            icon={<AlertTriangle className="text-[#041E42]" />}
+          />
+          <KpiCard
+            title="Absences Justifiées"
+            value={`${data.kpis.justified_hours}h`}
+            icon={<Users className="text-emerald-600" />}
+          />
+          <KpiCard
+            title="Non Justifiées"
+            value={`${data.kpis.unjustified_hours}h`}
+            icon={<AlertTriangle className="text-rose-600" />}
+          />
+          <KpiCard
+            title="Corrélation Pearson (r)"
+            value={data.kpis.pearson_correlation}
+            subtitle={`R² = ${data.kpis.r_squared ?? 0} • ${data.kpis.impact_per_10h} pts/10h`}
+            icon={<TrendingUp className="text-amber-600" />}
+          />
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
           <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-1">Corrélation Absentéisme vs Moyenne Scolaire</h3>
-            <p className="text-xs text-slate-500 mb-4">Régression linéaire montrant la chute de la moyenne lorsque les absences augmentent.</p>
+            <h3 className="font-bold text-[#041E42] mb-1">
+              Corrélation Absentéisme vs Moyenne Pondérée
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Régression linéaire montrant l'impact statistique des heures d'absence sur la moyenne.
+            </p>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart>
@@ -331,7 +655,9 @@ if (activeTab === "financial") {
           </div>
 
           <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-4">Évolution Mensuelle des Absences & Retards</h3>
+            <h3 className="font-bold text-[#041E42] mb-4">
+              Évolution Mensuelle des Absences & Retards
+            </h3>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.monthly_trend}>
@@ -366,7 +692,9 @@ if (activeTab === "financial") {
 
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-4">Répartition Géographique des Élèves (Bassin de Recrutement)</h3>
+            <h3 className="font-bold text-[#041E42] mb-4">
+              Répartition Géographique des Élèves (Bassin de Recrutement)
+            </h3>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.by_zone}>
@@ -385,7 +713,15 @@ if (activeTab === "financial") {
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={data.status_breakdown} dataKey="count" nameKey="status" cx="50%" cy="50%" outerRadius={85} label>
+                  <Pie
+                    data={data.status_breakdown}
+                    dataKey="count"
+                    nameKey="status"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={85}
+                    label
+                  >
                     {data.status_breakdown.map((_, idx) => (
                       <Cell key={idx} fill={[NAVY, EMERALD, ROSE][idx % 3]} />
                     ))}
@@ -416,7 +752,9 @@ if (activeTab === "financial") {
 
         <div className="grid lg:grid-cols-2 gap-6">
           <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-4">Volume Horaire Hebdomadaire par Enseignant</h3>
+            <h3 className="font-bold text-[#041E42] mb-4">
+              Volume Horaire Hebdomadaire par Enseignant
+            </h3>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.teachers_workload} layout="vertical">
@@ -476,11 +814,29 @@ if (activeTab === "financial") {
   if (activeTab === "recovery") {
     return (
       <div className="space-y-6">
+        {renderFilterBar()}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Créances Échues (Overdue)" value={`${(data.kpis.overdue_balance?? 0).toLocaleString()} TND`} icon={<AlertTriangle className="text-rose-600" />} />
-          <KpiCard title="Reliquats Partiels" value={`${(data.kpis.partial_balance?? 0).toLocaleString()} TND`} icon={<Wallet className="text-amber-600" />} />
-          <KpiCard title="Tranches Soldées" value={data.kpis.paid_installments} icon={<CheckCircle2 className="text-emerald-600" />} />
-          <KpiCard title="Tranches en Souffrance" value={data.kpis.unpaid_installments} icon={<DollarSign className="text-[#041E42]" />} />
+          <KpiCard
+            title="Créances Échues (Overdue)"
+            value={`${(data.kpis.overdue_balance ?? 0).toLocaleString()} TND`}
+            icon={<AlertTriangle className="text-rose-600" />}
+          />
+          <KpiCard
+            title="Reliquats Partiels"
+            value={`${(data.kpis.partial_balance ?? 0).toLocaleString()} TND`}
+            icon={<Wallet className="text-amber-600" />}
+          />
+          <KpiCard
+            title="Tranches Soldées"
+            value={data.kpis.paid_installments}
+            icon={<CheckCircle2 className="text-emerald-600" />}
+          />
+          <KpiCard
+            title="Tranches en Souffrance"
+            value={data.kpis.unpaid_installments}
+            icon={<DollarSign className="text-[#041E42]" />}
+          />
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
@@ -506,7 +862,15 @@ if (activeTab === "financial") {
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={data.status_distribution} dataKey="amount" nameKey="status" cx="50%" cy="50%" outerRadius={85} label>
+                  <Pie
+                    data={data.status_distribution}
+                    dataKey="amount"
+                    nameKey="status"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={85}
+                    label
+                  >
                     {data.status_distribution.map((_, idx) => (
                       <Cell key={idx} fill={[EMERALD, GOLD, ROSE][idx % 3]} />
                     ))}
@@ -537,7 +901,9 @@ if (activeTab === "financial") {
 
         <div className="grid lg:grid-cols-2 gap-6">
           <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-4">Volume & Lecture par Thématique de Notification</h3>
+            <h3 className="font-bold text-[#041E42] mb-4">
+              Volume & Lecture par Thématique de Notification
+            </h3>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.by_category}>
@@ -554,8 +920,12 @@ if (activeTab === "financial") {
           </div>
 
           <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-1">Impact de l'Engagement Parental sur la Moyenne</h3>
-            <p className="text-xs text-slate-500 mb-4">Comparaison des résultats scolaires selon le suivi actif des notifications par les parents.</p>
+            <h3 className="font-bold text-[#041E42] mb-1">
+              Impact de l'Engagement Parental sur la Moyenne
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Comparaison des moyennes pondérées selon le suivi actif des notifications par les parents.
+            </p>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.engagement_impact}>
@@ -586,11 +956,33 @@ if (activeTab === "financial") {
 
     return (
       <div className="space-y-6">
+        {renderFilterBar()}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Élèves sous Surveillance" value={data.kpis.total_at_risk} subtitle={`Moteur : ${data.model_used}`} icon={<ShieldAlert className="text-amber-600" />} />
-          <KpiCard title="Risque Critique (≥68)" value={data.kpis.critical_risk} subtitle="Action immédiate requise" icon={<AlertTriangle className="text-rose-600" />} />
-          <KpiCard title="Risque Abandon IA" value={data.kpis.dropout_risk} subtitle="Prédiction RandomForest" icon={<BrainCircuit className="text-[#041E42]" />} />
-          <KpiCard title="Risque Impayés Associé" value={data.kpis.financial_risk} subtitle="Dossiers en souffrance" icon={<DollarSign className="text-orange-600" />} />
+          <KpiCard
+            title="Élèves sous Surveillance"
+            value={data.kpis.total_at_risk}
+            subtitle={data.model_used}
+            icon={<ShieldAlert className="text-amber-600" />}
+          />
+          <KpiCard
+            title="Risque Critique (≥68)"
+            value={data.kpis.critical_risk}
+            subtitle="Action immédiate requise"
+            icon={<AlertTriangle className="text-rose-600" />}
+          />
+          <KpiCard
+            title="Risque Abandon IA"
+            value={data.kpis.dropout_risk}
+            subtitle="Prédiction RandomForest"
+            icon={<BrainCircuit className="text-[#041E42]" />}
+          />
+          <KpiCard
+            title="Risque Impayés Associé"
+            value={data.kpis.financial_risk}
+            subtitle="Dossiers en souffrance"
+            icon={<DollarSign className="text-orange-600" />}
+          />
         </div>
 
         <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
@@ -611,12 +1003,14 @@ if (activeTab === "financial") {
         <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm overflow-x-auto">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div>
-              <h3 className="font-bold text-[#041E42]">Matrice Prédictive Early Warning System (EWS)</h3>
+              <h3 className="font-bold text-[#041E42]">
+                Matrice Prédictive Early Warning System (EWS)
+              </h3>
               <p className="text-xs text-slate-500">
-                Détection croisée : chute académique, probabilité d'abandon ({data.model_used}) et défaut de paiement.
+                Détection croisée : chute académique pondérée, probabilité d'abandon ({data.model_used}) et défaut de paiement.
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {[
                 { id: "ALL", label: `Tous (${data.students.length})` },
                 { id: "CRITIQUE", label: "Critiques (≥68)" },
@@ -636,6 +1030,14 @@ if (activeTab === "financial") {
                   {btn.label}
                 </button>
               ))}
+
+              <button
+                type="button"
+                onClick={() => handleExportEwsCsv(filteredStudents)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold transition cursor-pointer"
+              >
+                <Download size={14} /> Export CSV
+              </button>
             </div>
           </div>
 
@@ -655,7 +1057,9 @@ if (activeTab === "financial") {
                   <td className="p-3">
                     <span
                       className={`inline-block px-2.5 py-1 rounded-full text-xs font-extrabold ${
-                        st.risk_level === "CRITIQUE" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-800"
+                        st.risk_level === "CRITIQUE"
+                          ? "bg-rose-100 text-rose-700"
+                          : "bg-amber-100 text-amber-800"
                       }`}
                     >
                       {st.risk_score}/100 ({st.risk_level})
@@ -685,13 +1089,18 @@ if (activeTab === "financial") {
                   <td className="p-3">
                     <div className="flex flex-wrap gap-1">
                       {st.factors.map((f, idx) => (
-                        <span key={idx} className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-xs">
+                        <span
+                          key={idx}
+                          className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-xs"
+                        >
                           {f}
                         </span>
                       ))}
                     </div>
                   </td>
-                  <td className="p-3 text-emerald-800 font-semibold text-xs">{st.recommendation}</td>
+                  <td className="p-3 text-emerald-800 font-semibold text-xs">
+                    {st.recommendation}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -717,17 +1126,41 @@ if (activeTab === "financial") {
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Effectif Projeté 2026-27" value={`${data.kpis.projected_students_2026} élèves`} subtitle="Régression Linéaire ML" icon={<Users className="text-[#041E42]" />} />
-          <KpiCard title="Recettes Projetées 2026-27" value={`${(data.kpis.projected_revenue_2026?? 0).toLocaleString()} TND`} subtitle={`Croissance : +${data.kpis.revenue_growth_rate}%`} icon={<DollarSign className="text-emerald-600" />} />
-          <KpiCard title="Taux Réussite Projeté" value={`${data.kpis.projected_pass_rate_2026}%`} subtitle="Tendance 2024–2027" icon={<TrendingUp className="text-amber-600" />} />
-          <KpiCard title="Moteur Prédictif" value="scikit-learn" subtitle="LinearReg + RandomForest" icon={<BrainCircuit className="text-[#0f3f7d]" />} />
+          <KpiCard
+            title="Effectif Projeté 2026-27"
+            value={`${data.kpis.projected_students_2026} élèves`}
+            subtitle="Régression Linéaire ML"
+            icon={<Users className="text-[#041E42]" />}
+          />
+          <KpiCard
+            title="Recettes Projetées 2026-27"
+            value={`${(data.kpis.projected_revenue_2026 ?? 0).toLocaleString()} TND`}
+            subtitle={`Croissance : +${data.kpis.revenue_growth_rate}%`}
+            icon={<DollarSign className="text-emerald-600" />}
+          />
+          <KpiCard
+            title="Taux Réussite Projeté"
+            value={`${data.kpis.projected_pass_rate_2026}%`}
+            subtitle="Tendance 2024–2027"
+            icon={<TrendingUp className="text-amber-600" />}
+          />
+          <KpiCard
+            title="Moteur Prédictif"
+            value="scikit-learn"
+            subtitle={data.ml_engine}
+            icon={<BrainCircuit className="text-[#0f3f7d]" />}
+          />
         </div>
 
         {/* Trajectoire Multi-Annuelle + Importance des Facteurs RandomForest */}
         <div className="grid lg:grid-cols-2 gap-6">
           <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-1">Trajectoire Financière Multi-Annuelle (2024–2027)</h3>
-            <p className="text-xs text-slate-500 mb-4">Projection prédictive calculée via LinearRegression sur l'historique Neon.</p>
+            <h3 className="font-bold text-[#041E42] mb-1">
+              Trajectoire Financière Multi-Annuelle (2024–2027)
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Projection prédictive calculée via LinearRegression sur l'historique Neon.
+            </p>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={data.multi_year_trajectory}>
@@ -735,15 +1168,27 @@ if (activeTab === "financial") {
                   <XAxis dataKey="year" tick={{ fontSize: 11 }} />
                   <YAxis />
                   <Tooltip />
-                  <Area type="monotone" dataKey="revenue" name="Chiffre d'affaires (TND)" stroke={NAVY} fill={GOLD} fillOpacity={0.35} strokeWidth={3} />
+                  <Area
+                    type="monotone"
+                    dataKey="revenue"
+                    name="Chiffre d'affaires (TND)"
+                    stroke={NAVY}
+                    fill={GOLD}
+                    fillOpacity={0.35}
+                    strokeWidth={3}
+                  />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           <div className="bg-white/90 p-6 rounded-2xl border border-slate-200/80 shadow-sm">
-            <h3 className="font-bold text-[#041E42] mb-1">Poids des Facteurs Prédictifs (RandomForest Feature Importance)</h3>
-            <p className="text-xs text-slate-500 mb-4">Variables ayant le plus fort impact sur le décrochage et la réussite.</p>
+            <h3 className="font-bold text-[#041E42] mb-1">
+              Poids des Facteurs Prédictifs (RandomForest Feature Importance)
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Variables ayant le plus fort impact sur le décrochage et la réussite.
+            </p>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.feature_importances} layout="vertical">
@@ -751,7 +1196,12 @@ if (activeTab === "financial") {
                   <XAxis type="number" unit="%" domain={[0, 60]} />
                   <YAxis dataKey="feature" type="category" width={155} tick={{ fontSize: 11 }} />
                   <Tooltip />
-                  <Bar dataKey="importance" name="Importance IA (%)" fill={NAVY_MID} radius={[0, 6, 6, 0]} />
+                  <Bar
+                    dataKey="importance"
+                    name="Importance IA (%)"
+                    fill={NAVY_MID}
+                    radius={[0, 6, 6, 0]}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -772,12 +1222,13 @@ if (activeTab === "financial") {
           </div>
 
           <div className="grid lg:grid-cols-2 gap-8 items-center">
-            {/* Curseurs de simulation */}
             <div className="space-y-4 bg-white/5 p-5 rounded-2xl border border-white/10">
               <div>
                 <div className="flex justify-between text-xs font-semibold mb-1">
                   <span>Variation des effectifs inscrits</span>
-                  <span className="text-amber-300 font-bold">{simStudentsPct >= 0 ? `+${simStudentsPct}%` : `${simStudentsPct}%`} ({simStudents} élèves)</span>
+                  <span className="text-amber-300 font-bold">
+                    {simStudentsPct >= 0 ? `+${simStudentsPct}%` : `${simStudentsPct}%`} ({simStudents} élèves)
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -807,7 +1258,9 @@ if (activeTab === "financial") {
               <div>
                 <div className="flex justify-between text-xs font-semibold mb-1">
                   <span>Taux de recouvrement des impayés existants</span>
-                  <span className="text-amber-300 font-bold">{simRecoveryPct}% (+{(Math.round(simRecoveredUnpaid)?? 0).toLocaleString()} TND)</span>
+                  <span className="text-amber-300 font-bold">
+                    {simRecoveryPct}% (+{(Math.round(simRecoveredUnpaid) ?? 0).toLocaleString()} TND)
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -837,34 +1290,52 @@ if (activeTab === "financial") {
               </div>
             </div>
 
-            {/* Résultats instantanés de la simulation */}
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="p-4 rounded-2xl bg-white/10 border border-amber-400/30">
                 <div className="text-xs text-slate-300">Chiffre d'Affaires Simulé</div>
-                <div className="text-2xl font-extrabold text-amber-400 mt-1">{(simRevenue?? 0).toLocaleString()} TND</div>
-                <div className={`text-xs font-semibold mt-1 ${revenueDelta >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                  {revenueDelta >= 0 ? `+${(revenueDelta?? 0).toLocaleString()}` : (revenueDelta?? 0).toLocaleString()} TND vs actuel
+                <div className="text-2xl font-extrabold text-amber-400 mt-1">
+                  {(simRevenue ?? 0).toLocaleString()} TND
+                </div>
+                <div
+                  className={`text-xs font-semibold mt-1 ${
+                    revenueDelta >= 0 ? "text-emerald-300" : "text-rose-300"
+                  }`}
+                >
+                  {revenueDelta >= 0
+                    ? `+${(revenueDelta ?? 0).toLocaleString()}`
+                    : (revenueDelta ?? 0).toLocaleString()}{" "}
+                  TND vs actuel
                 </div>
               </div>
 
               <div className="p-4 rounded-2xl bg-white/10 border border-white/15">
                 <div className="text-xs text-slate-300">Taux d'Occupation Salles</div>
                 <div className="text-2xl font-extrabold text-white mt-1">{simOccupancy}%</div>
-                <div className={`text-xs font-semibold mt-1 ${Number(simOccupancy) > 100 ? "text-rose-300" : "text-emerald-300"}`}>
-                  {Number(simOccupancy) > 100 ? "Ouvrir +1 salle requise" : "Capacité d'accueil suffisante"}
+                <div
+                  className={`text-xs font-semibold mt-1 ${
+                    Number(simOccupancy) > 100 ? "text-rose-300" : "text-emerald-300"
+                  }`}
+                >
+                  {Number(simOccupancy) > 100
+                    ? "Ouvrir +1 salle requise"
+                    : "Capacité d'accueil suffisante"}
                 </div>
               </div>
 
               <div className="p-4 rounded-2xl bg-white/10 border border-white/15">
                 <div className="text-xs text-slate-300">Taux de Réussite Estimé</div>
                 <div className="text-2xl font-extrabold text-emerald-300 mt-1">{simPassRate}%</div>
-                <div className="text-xs text-slate-300 mt-1">Base actuelle : {base.current_pass_rate}%</div>
+                <div className="text-xs text-slate-300 mt-1">
+                  Base actuelle : {base.current_pass_rate}%
+                </div>
               </div>
 
               <div className="p-4 rounded-2xl bg-white/10 border border-white/15">
                 <div className="text-xs text-slate-300">Effectif Cible Rentrée</div>
                 <div className="text-2xl font-extrabold text-white mt-1">{simStudents} élèves</div>
-                <div className="text-xs text-slate-300 mt-1">Capacité : {base.total_capacity} places</div>
+                <div className="text-xs text-slate-300 mt-1">
+                  Capacité : {base.total_capacity} places
+                </div>
               </div>
             </div>
           </div>
@@ -877,9 +1348,14 @@ if (activeTab === "financial") {
           </h3>
           <div className="grid md:grid-cols-2 gap-4">
             {data.recommendations.map((rec, idx) => (
-              <div key={idx} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/70 hover:border-amber-400 transition">
+              <div
+                key={idx}
+                className="p-4 rounded-2xl border border-slate-200 bg-slate-50/70 hover:border-amber-400 transition"
+              >
                 <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#0f3f7d]">{rec.domain}</span>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#0f3f7d]">
+                    {rec.domain}
+                  </span>
                   <span
                     className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
                       rec.priority === "HAUTE"
@@ -894,7 +1370,9 @@ if (activeTab === "financial") {
                 </div>
                 <div className="font-bold text-sm text-[#041E42] mb-1">{rec.title}</div>
                 <p className="text-xs text-slate-600 leading-relaxed mb-2">{rec.detail}</p>
-                <div className="text-xs font-bold text-emerald-700">Impact estimé : {rec.impact}</div>
+                <div className="text-xs font-bold text-emerald-700">
+                  Impact estimé : {rec.impact}
+                </div>
               </div>
             ))}
           </div>
@@ -910,11 +1388,15 @@ function KpiCard({ title, value, subtitle, icon }) {
   return (
     <div className="bg-white/90 backdrop-blur-md p-5 rounded-2xl border border-slate-200/80 hover:border-amber-400/60 shadow-sm transition flex items-center justify-between gap-3">
       <div className="min-w-0">
-        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider truncate">{title}</p>
+        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider truncate">
+          {title}
+        </p>
         <p className="text-2xl font-extrabold text-[#041E42] mt-1">{value}</p>
         {subtitle && <p className="text-[11px] text-slate-500 mt-0.5 truncate">{subtitle}</p>}
       </div>
-      <div className="p-3 bg-amber-400/15 border border-amber-400/30 rounded-2xl shrink-0">{icon}</div>
+      <div className="p-3 bg-amber-400/15 border border-amber-400/30 rounded-2xl shrink-0">
+        {icon}
+      </div>
     </div>
   );
 }

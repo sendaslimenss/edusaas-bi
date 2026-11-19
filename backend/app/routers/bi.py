@@ -1,9 +1,10 @@
 import math
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -21,15 +22,24 @@ def _safe_float(val, digits: int = 2) -> float:
     return round(float(val), digits)
 
 
+def _date_clause(column: str, school_year: str) -> str:
+    if school_year == "2024-2025":
+        return f" AND {column} < DATE '2025-09-01'"
+    if school_year == "2025-2026":
+        return f" AND {column} >= DATE '2025-09-01'"
+    return ""
+
+
 def _train_dropout_model(df: pd.DataFrame):
-    """Entraîne un RandomForestClassifier scikit-learn sur l'historique élève pour estimer le risque d'abandon."""
+    """Entraîne un RandomForestClassifier scikit-learn avec validation croisée pour estimer le risque d'abandon."""
     features = ["avg_grade", "grade_delta", "unjust_hours", "unpaid_balance"]
     X = df[features].fillna(0.0).to_numpy(dtype=float)
     y = df["is_dropped"].to_numpy(dtype=int)
 
-    if len(df) >= 12 and len(np.unique(y)) >= 2:
+    unique_classes, counts = np.unique(y, return_counts=True)
+    if len(df) >= 12 and len(unique_classes) >= 2 and int(counts.min()) >= 2:
         clf = RandomForestClassifier(
-            n_estimators=120,
+            n_estimators=150,
             max_depth=5,
             min_samples_leaf=2,
             class_weight="balanced",
@@ -37,17 +47,26 @@ def _train_dropout_model(df: pd.DataFrame):
         )
         clf.fit(X, y)
         probs = clf.predict_proba(X)[:, 1]
+
+        cv_splits = min(5, int(counts.min()))
+        if cv_splits >= 2:
+            skf = StratifiedKFold(n_splits=cv_splits, shuffle=True, random_state=42)
+            cv_scores = cross_val_score(clf, X, y, cv=skf, scoring="accuracy")
+            cv_acc = _safe_float(float(np.mean(cv_scores)) * 100, 1)
+            engine_label = f"RandomForest (CV {cv_acc}%)"
+        else:
+            engine_label = "RandomForestClassifier (scikit-learn)"
+
         importances = [
             {"feature": label, "importance": _safe_float(imp * 100, 1)}
             for label, imp in zip(
-                ["Moyenne générale", "Variation T1→T3", "Absences non justifiées", "Impayés scolarité"],
+                ["Moyenne pondérée", "Variation T1→T3", "Absences non justifiées", "Impayés scolarité"],
                 clf.feature_importances_,
             )
         ]
         importances.sort(key=lambda item: item["importance"], reverse=True)
-        return probs, importances, "RandomForestClassifier (scikit-learn)"
+        return probs, importances, engine_label
 
-    # Fallback analytique calibré si une seule classe est présente
     raw_logit = (
         -2.8
         + 0.38 * (10.5 - df["avg_grade"].to_numpy(dtype=float))
@@ -57,7 +76,7 @@ def _train_dropout_model(df: pd.DataFrame):
     )
     probs = 1.0 / (1.0 + np.exp(-np.clip(raw_logit, -15, 15)))
     importances = [
-        {"feature": "Moyenne générale", "importance": 42.0},
+        {"feature": "Moyenne pondérée", "importance": 42.0},
         {"feature": "Absences non justifiées", "importance": 28.0},
         {"feature": "Variation T1→T3", "importance": 18.0},
         {"feature": "Impayés scolarité", "importance": 12.0},
@@ -70,33 +89,37 @@ def _train_dropout_model(df: pd.DataFrame):
 # ==============================================================================
 @router.get("/general")
 def get_general_dashboard(
+    level: str = Query(default="ALL"),
     current_user: dict = Depends(require_roles(EXEC_ROLES)),
     db: Session = Depends(get_db),
 ):
     sid = current_user["school_id"]
+    lvl_filter = " AND c.level = :lvl" if level and level != "ALL" else ""
+    params: dict = {"sid": sid, "lvl": level}
 
     counts = db.execute(
-        text("""
+        text(f"""
             SELECT
-                (SELECT COUNT(*) FROM students WHERE school_id = :sid AND status = 'active') AS total_students,
+                (SELECT COUNT(*) FROM students s JOIN classes c ON s.class_id = c.id
+                 WHERE s.school_id = :sid AND s.status = 'active' {lvl_filter}) AS total_students,
                 (SELECT COUNT(*) FROM users WHERE school_id = :sid AND role = 'teacher') AS total_teachers,
-                (SELECT COUNT(*) FROM classes WHERE school_id = :sid) AS total_classes,
-                (SELECT COALESCE(SUM(max_capacity), 0) FROM classes WHERE school_id = :sid) AS total_capacity
+                (SELECT COUNT(*) FROM classes c WHERE c.school_id = :sid {lvl_filter}) AS total_classes,
+                (SELECT COALESCE(SUM(c.max_capacity), 0) FROM classes c WHERE c.school_id = :sid {lvl_filter}) AS total_capacity
         """),
-        {"sid": sid},
+        params,
     ).mappings().first()
 
     classes_rows = db.execute(
-        text("""
+        text(f"""
             SELECT c.id, c.name, c.level, c.room_name, c.max_capacity,
                    COUNT(s.id) AS current_students
             FROM classes c
             LEFT JOIN students s ON s.class_id = c.id AND s.status = 'active'
-            WHERE c.school_id = :sid
+            WHERE c.school_id = :sid {lvl_filter}
             GROUP BY c.id
             ORDER BY c.level, c.name
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     classes_analysis = []
@@ -161,25 +184,32 @@ def get_general_dashboard(
 
 
 # ==============================================================================
-# #2. DASHBOARD FINANCIER – RECOUVREMENT & PRÉVISION ML (RIDGE / LINEAR REGRESSION)
+# #2. DASHBOARD FINANCIER – RECOUVREMENT & PRÉVISION ML (RIDGE + IC 95%)
 # ==============================================================================
 @router.get("/financial")
 def get_financial_dashboard(
+    school_year: str = Query(default="ALL"),
+    level: str = Query(default="ALL"),
     current_user: dict = Depends(require_roles(FINANCE_BI_ROLES)),
     db: Session = Depends(get_db),
 ):
     sid = current_user["school_id"]
+    yr_filter = _date_clause("p.due_date", school_year)
+    lvl_filter = " AND c.level = :lvl" if level and level != "ALL" else ""
+    params: dict = {"sid": sid, "lvl": level}
 
     totals = db.execute(
-        text("""
+        text(f"""
             SELECT
-                COALESCE(SUM(amount_due), 0) AS total_expected,
-                COALESCE(SUM(amount_paid), 0) AS total_collected,
-                COALESCE(SUM(amount_due - amount_paid), 0) AS total_remaining
-            FROM payments
-            WHERE school_id = :sid
+                COALESCE(SUM(p.amount_due), 0) AS total_expected,
+                COALESCE(SUM(p.amount_paid), 0) AS total_collected,
+                COALESCE(SUM(p.amount_due - p.amount_paid), 0) AS total_remaining
+            FROM payments p
+            JOIN students st ON p.student_id = st.id
+            LEFT JOIN classes c ON st.class_id = c.id
+            WHERE p.school_id = :sid {yr_filter} {lvl_filter}
         """),
-        {"sid": sid},
+        params,
     ).mappings().first()
 
     expected = _safe_float(totals["total_expected"])
@@ -187,55 +217,82 @@ def get_financial_dashboard(
     remaining = _safe_float(totals["total_remaining"])
     recovery_rate = _safe_float((collected / expected) * 100, 1) if expected > 0 else 0.0
 
-    # Comparaison par année scolaire (2024-2025 vs 2025-2026)
     yearly_rows = db.execute(
-        text("""
+        text(f"""
             SELECT
-                CASE WHEN due_date < DATE '2025-09-01' THEN '2024-2025 (N-1)' ELSE '2025-2026 (Actuel)' END AS school_year,
-                COALESCE(SUM(amount_due), 0) AS expected,
-                COALESCE(SUM(amount_paid), 0) AS collected
-            FROM payments
-            WHERE school_id = :sid
+                CASE WHEN p.due_date < DATE '2025-09-01' THEN '2024-2025 (N-1)' ELSE '2025-2026 (Actuel)' END AS school_year,
+                COALESCE(SUM(p.amount_due), 0) AS expected,
+                COALESCE(SUM(p.amount_paid), 0) AS collected
+            FROM payments p
+            JOIN students st ON p.student_id = st.id
+            LEFT JOIN classes c ON st.class_id = c.id
+            WHERE p.school_id = :sid {lvl_filter}
             GROUP BY school_year
             ORDER BY school_year ASC
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     monthly_rows = db.execute(
-        text("""
-            SELECT TO_CHAR(COALESCE(paid_date, due_date), 'YYYY-MM') AS month,
-                   SUM(amount_paid) AS revenue
-            FROM payments
-            WHERE school_id = :sid AND amount_paid > 0
+        text(f"""
+            SELECT TO_CHAR(COALESCE(p.paid_date, p.due_date), 'YYYY-MM') AS month,
+                   SUM(p.amount_paid) AS revenue
+            FROM payments p
+            JOIN students st ON p.student_id = st.id
+            LEFT JOIN classes c ON st.class_id = c.id
+            WHERE p.school_id = :sid AND p.amount_paid > 0 {yr_filter} {lvl_filter}
             GROUP BY month
             ORDER BY month ASC
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     history = [
-        {"month": r["month"], "revenue": _safe_float(r["revenue"]), "forecast": None, "type": "Réel"}
+        {
+            "month": r["month"],
+            "revenue": _safe_float(r["revenue"]),
+            "forecast": None,
+            "forecast_low": None,
+            "forecast_high": None,
+            "type": "Réel",
+        }
         for r in monthly_rows
     ]
 
-    # Prévision ML (Ridge Regression scikit-learn sur les 3 prochains mois)
     forecast = []
+    model_r2 = 0.0
     n = len(history)
     if n >= 2:
         X_train = np.arange(n).reshape(-1, 1)
         y_train = np.array([h["revenue"] for h in history], dtype=float)
         model = Ridge(alpha=1.0).fit(X_train, y_train)
+        y_hat = model.predict(X_train)
+        residuals = y_train - y_hat
+        std_err = float(np.std(residuals)) if n > 2 else float(np.mean(y_train) * 0.08)
+        if np.std(y_train) > 0:
+            model_r2 = max(0.0, _safe_float(model.score(X_train, y_train), 2))
+
         future_X = np.arange(n, n + 3).reshape(-1, 1)
         preds = model.predict(future_X)
-        # Relie le dernier point réel à la courbe prévisionnelle
+
         history[-1]["forecast"] = history[-1]["revenue"]
+        history[-1]["forecast_low"] = history[-1]["revenue"]
+        history[-1]["forecast_high"] = history[-1]["revenue"]
+
         for i, label in enumerate(["Mois +1 (IA)", "Mois +2 (IA)", "Mois +3 (IA)"]):
             pred_val = max(0.0, _safe_float(preds[i]))
-            forecast.append({"month": label, "revenue": None, "forecast": pred_val, "type": "Prévision ML"})
+            margin = 1.96 * std_err * (1.0 + 0.12 * i)
+            forecast.append({
+                "month": label,
+                "revenue": None,
+                "forecast": pred_val,
+                "forecast_low": max(0.0, _safe_float(pred_val - margin)),
+                "forecast_high": _safe_float(pred_val + margin),
+                "type": "Prévision ML",
+            })
 
     overdue_parents = db.execute(
-        text("""
+        text(f"""
             SELECT u_parent.full_name AS parent_name,
                    u_parent.email AS parent_email,
                    u_student.full_name AS student_name,
@@ -247,13 +304,22 @@ def get_financial_dashboard(
             JOIN users u_student ON st.user_id = u_student.id
             JOIN users u_parent ON st.parent_id = u_parent.id
             LEFT JOIN classes c ON st.class_id = c.id
-            WHERE p.school_id = :sid AND p.status IN ('overdue', 'partial')
+            WHERE p.school_id = :sid AND p.status IN ('overdue', 'partial') {yr_filter} {lvl_filter}
             GROUP BY u_parent.id, u_student.id, c.name
             ORDER BY unpaid_amount DESC
             LIMIT 25
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
+
+    formatted_debtors = [
+        {
+            **dict(r),
+            "unpaid_amount": _safe_float(r["unpaid_amount"]),
+            "unpaid_installments": int(r["unpaid_installments"]),
+        }
+        for r in overdue_parents
+    ]
 
     return {
         "kpis": {
@@ -261,6 +327,7 @@ def get_financial_dashboard(
             "total_collected": collected,
             "total_remaining": remaining,
             "recovery_rate": recovery_rate,
+            "model_r2": model_r2,
         },
         "yearly_comparison": [
             {
@@ -271,81 +338,96 @@ def get_financial_dashboard(
             for r in yearly_rows
         ],
         "revenue_series": history + forecast,
-        "overdue_parents": [
-            {**dict(r), "unpaid_amount": _safe_float(r["unpaid_amount"]), "unpaid_installments": int(r["unpaid_installments"])}
-            for r in overdue_parents
-        ],
+        "overdue_parents": formatted_debtors,
+        "top_debtors": formatted_debtors,
     }
 
 
 # ==============================================================================
-# #3. DASHBOARD PÉDAGOGIQUE – PERFORMANCES, MENTIONS & ÉVOLUTION LONGITUDINALE
+# #3. DASHBOARD PÉDAGOGIQUE – MOYENNES PONDÉRÉES, MENTIONS & ÉVOLUTION
 # ==============================================================================
 @router.get("/pedagogical")
 def get_pedagogical_dashboard(
+    school_year: str = Query(default="2025-2026"),
+    trimester: int = Query(default=0, ge=0, le=3),
+    level: str = Query(default="ALL"),
     current_user: dict = Depends(require_roles(EXEC_ROLES)),
     db: Session = Depends(get_db),
 ):
     sid = current_user["school_id"]
+    yr_filter = _date_clause("g.recorded_at", school_year)
+    trim_filter = " AND g.trimester = :trim" if trimester in (1, 2, 3) else ""
+    lvl_filter = " AND c.level = :lvl" if level and level != "ALL" else ""
+    params: dict = {"sid": sid, "trim": trimester, "lvl": level}
 
     by_class = db.execute(
-        text("""
+        text(f"""
             SELECT c.name AS class_name, c.level,
-                   ROUND(AVG(g.score)::numeric, 2) AS average_score
+                   ROUND((SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0))::numeric, 2) AS average_score
             FROM grades g
+            JOIN subjects sub ON g.subject_id = sub.id
             JOIN students st ON g.student_id = st.id
             JOIN classes c ON st.class_id = c.id
-            WHERE g.school_id = :sid AND st.status = 'active'
+            WHERE g.school_id = :sid AND st.status = 'active' {yr_filter} {trim_filter} {lvl_filter}
             GROUP BY c.id
             ORDER BY average_score DESC
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     by_subject = db.execute(
-        text("""
+        text(f"""
             SELECT sub.name AS subject_name, sub.coefficient,
                    ROUND(AVG(g.score)::numeric, 2) AS average_score
             FROM grades g
             JOIN subjects sub ON g.subject_id = sub.id
-            WHERE g.school_id = :sid
+            JOIN students st ON g.student_id = st.id
+            LEFT JOIN classes c ON st.class_id = c.id
+            WHERE g.school_id = :sid {yr_filter} {trim_filter} {lvl_filter}
             GROUP BY sub.id
             ORDER BY average_score DESC
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     by_period = db.execute(
-        text("""
+        text(f"""
             SELECT
-                CASE WHEN recorded_at < DATE '2025-09-01' THEN '24-25 T' || trimester
-                     ELSE '25-26 T' || trimester END AS label,
-                MIN(recorded_at) AS sort_dt,
-                ROUND(AVG(score)::numeric, 2) AS average_score
-            FROM grades
-            WHERE school_id = :sid
+                CASE WHEN g.recorded_at < DATE '2025-09-01' THEN '24-25 T' || g.trimester
+                     ELSE '25-26 T' || g.trimester END AS label,
+                MIN(g.recorded_at) AS sort_dt,
+                ROUND((SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0))::numeric, 2) AS average_score
+            FROM grades g
+            JOIN subjects sub ON g.subject_id = sub.id
+            JOIN students st ON g.student_id = st.id
+            LEFT JOIN classes c ON st.class_id = c.id
+            WHERE g.school_id = :sid {lvl_filter}
             GROUP BY label
             ORDER BY sort_dt ASC
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     student_avgs = db.execute(
-        text("""
-            SELECT g.student_id, AVG(g.score) AS avg_score
+        text(f"""
+            SELECT g.student_id,
+                   SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0) AS avg_score
             FROM grades g
+            JOIN subjects sub ON g.subject_id = sub.id
             JOIN students st ON g.student_id = st.id
-            WHERE g.school_id = :sid AND st.status = 'active' AND g.recorded_at >= DATE '2025-09-01'
+            LEFT JOIN classes c ON st.class_id = c.id
+            WHERE g.school_id = :sid AND st.status = 'active' {yr_filter} {trim_filter} {lvl_filter}
             GROUP BY g.student_id
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
-    scores = [float(s["avg_score"]) for s in student_avgs]
+    scores = [float(s["avg_score"]) for s in student_avgs if s["avg_score"] is not None]
     total_evaluated = len(scores)
     passed = sum(1 for sc in scores if sc >= 10.0)
     pass_rate = _safe_float((passed / total_evaluated) * 100, 1) if total_evaluated > 0 else 0.0
     school_avg = _safe_float(sum(scores) / total_evaluated, 2) if total_evaluated > 0 else 0.0
+    std_dev = _safe_float(float(np.std(scores)), 2) if total_evaluated > 1 else 0.0
 
     mentions = [
         {"mention": "Très Bien (≥16)", "count": sum(1 for sc in scores if sc >= 16.0)},
@@ -358,6 +440,7 @@ def get_pedagogical_dashboard(
     return {
         "kpis": {
             "school_average": school_avg,
+            "std_dev": std_dev,
             "pass_rate": pass_rate,
             "fail_rate": _safe_float(100.0 - pass_rate, 1),
             "struggling_students_count": total_evaluated - passed,
@@ -373,57 +456,66 @@ def get_pedagogical_dashboard(
 
 
 # ==============================================================================
-# #4. DASHBOARD ABSENCES & CORRÉLATION AVEC LES RÉSULTATS SCOLAIRES
+# #4. DASHBOARD ABSENCES & CORRÉLATION PONDÉRÉE AVEC LES RÉSULTATS
 # ==============================================================================
 @router.get("/attendance")
 def get_attendance_dashboard(
+    school_year: str = Query(default="ALL"),
+    level: str = Query(default="ALL"),
     current_user: dict = Depends(require_roles(EXEC_ROLES)),
     db: Session = Depends(get_db),
 ):
     sid = current_user["school_id"]
+    att_yr_filter = _date_clause("a.date", school_year)
+    gr_yr_filter = _date_clause("g.recorded_at", school_year)
+    lvl_filter = " AND c.level = :lvl" if level and level != "ALL" else ""
+    params: dict = {"sid": sid, "lvl": level}
 
     summary = db.execute(
-        text("""
+        text(f"""
             SELECT
-                COALESCE(SUM(hours_missed), 0) AS total_hours,
-                COALESCE(SUM(CASE WHEN justified = TRUE THEN hours_missed ELSE 0 END), 0) AS justified_hours,
-                COALESCE(SUM(CASE WHEN justified = FALSE THEN hours_missed ELSE 0 END), 0) AS unjustified_hours
-            FROM attendance
-            WHERE school_id = :sid
+                COALESCE(SUM(a.hours_missed), 0) AS total_hours,
+                COALESCE(SUM(CASE WHEN a.justified = TRUE THEN a.hours_missed ELSE 0 END), 0) AS justified_hours,
+                COALESCE(SUM(CASE WHEN a.justified = FALSE THEN a.hours_missed ELSE 0 END), 0) AS unjustified_hours
+            FROM attendance a
+            JOIN students st ON a.student_id = st.id
+            LEFT JOIN classes c ON st.class_id = c.id
+            WHERE a.school_id = :sid {att_yr_filter} {lvl_filter}
         """),
-        {"sid": sid},
+        params,
     ).mappings().first()
 
     monthly = db.execute(
-        text("""
-            SELECT TO_CHAR(date, 'YYYY-MM') AS month,
-                   SUM(CASE WHEN type = 'absence' THEN hours_missed ELSE 0 END) AS absences,
-                   SUM(CASE WHEN type = 'late' THEN hours_missed ELSE 0 END) AS lates
-            FROM attendance
-            WHERE school_id = :sid
+        text(f"""
+            SELECT TO_CHAR(a.date, 'YYYY-MM') AS month,
+                   SUM(CASE WHEN a.type = 'absence' THEN a.hours_missed ELSE 0 END) AS absences,
+                   SUM(CASE WHEN a.type = 'late' THEN a.hours_missed ELSE 0 END) AS lates
+            FROM attendance a
+            JOIN students st ON a.student_id = st.id
+            LEFT JOIN classes c ON st.class_id = c.id
+            WHERE a.school_id = :sid {att_yr_filter} {lvl_filter}
             GROUP BY month
             ORDER BY month ASC
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     by_class_att = db.execute(
-        text("""
+        text(f"""
             SELECT c.name AS class_name,
-                   COALESCE(SUM(a.hours_missed), 0) AS total_hours,
-                   ROUND(COALESCE(AVG(a.hours_missed), 0)::numeric, 1) AS avg_per_event
+                   COALESCE(SUM(a.hours_missed), 0) AS total_hours
             FROM classes c
             LEFT JOIN students st ON st.class_id = c.id AND st.status = 'active'
-            LEFT JOIN attendance a ON a.student_id = st.id
-            WHERE c.school_id = :sid
+            LEFT JOIN attendance a ON a.student_id = st.id {att_yr_filter}
+            WHERE c.school_id = :sid {lvl_filter}
             GROUP BY c.id
             ORDER BY total_hours DESC
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     scatter_rows = db.execute(
-        text("""
+        text(f"""
             SELECT u.full_name AS student_name,
                    c.name AS class_name,
                    COALESCE(att.total_hours, 0) AS absence_hours,
@@ -432,16 +524,17 @@ def get_attendance_dashboard(
             JOIN users u ON st.user_id = u.id
             LEFT JOIN classes c ON st.class_id = c.id
             LEFT JOIN (
-                SELECT student_id, SUM(hours_missed) AS total_hours
-                FROM attendance WHERE school_id = :sid GROUP BY student_id
+                SELECT a.student_id, SUM(a.hours_missed) AS total_hours
+                FROM attendance a WHERE a.school_id = :sid {att_yr_filter} GROUP BY a.student_id
             ) att ON att.student_id = st.id
             LEFT JOIN (
-                SELECT student_id, AVG(score) AS avg_grade
-                FROM grades WHERE school_id = :sid GROUP BY student_id
+                SELECT g.student_id, SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0) AS avg_grade
+                FROM grades g JOIN subjects sub ON g.subject_id = sub.id
+                WHERE g.school_id = :sid {gr_yr_filter} GROUP BY g.student_id
             ) gr ON gr.student_id = st.id
-            WHERE st.school_id = :sid AND st.status = 'active'
+            WHERE st.school_id = :sid AND st.status = 'active' {lvl_filter}
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     scatter_data = [
@@ -452,17 +545,20 @@ def get_attendance_dashboard(
             "avg_grade": _safe_float(r["avg_grade"], 2),
         }
         for r in scatter_rows
+        if float(r["avg_grade"]) > 0
     ]
 
     correlation_r = 0.0
     slope_impact = 0.0
+    r_squared = 0.0
     if len(scatter_data) > 2:
         xs = np.array([d["absence_hours"] for d in scatter_data], dtype=float)
         ys = np.array([d["avg_grade"] for d in scatter_data], dtype=float)
         if np.std(xs) > 0 and np.std(ys) > 0:
             correlation_r = _safe_float(np.corrcoef(xs, ys)[0, 1], 3)
+            r_squared = _safe_float(correlation_r ** 2, 3)
             reg = LinearRegression().fit(xs.reshape(-1, 1), ys)
-            slope_impact = _safe_float(reg.coef_[0] * 10, 2)  # Impact sur la moyenne pour 10h d'absence
+            slope_impact = _safe_float(reg.coef_[0] * 10, 2)
 
     return {
         "kpis": {
@@ -470,6 +566,7 @@ def get_attendance_dashboard(
             "justified_hours": _safe_float(summary["justified_hours"], 1),
             "unjustified_hours": _safe_float(summary["unjustified_hours"], 1),
             "pearson_correlation": correlation_r,
+            "r_squared": r_squared,
             "impact_per_10h": slope_impact,
         },
         "monthly_trend": [
@@ -652,26 +749,28 @@ def get_teachers_dashboard(
 # ==============================================================================
 @router.get("/recovery")
 def get_recovery_dashboard(
+    school_year: str = Query(default="ALL"),
     current_user: dict = Depends(require_roles(FINANCE_BI_ROLES)),
     db: Session = Depends(get_db),
 ):
     sid = current_user["school_id"]
+    yr_filter = _date_clause("p.due_date", school_year)
 
     by_status = db.execute(
-        text("""
-            SELECT status,
+        text(f"""
+            SELECT p.status,
                    COUNT(*) AS installments_count,
-                   COALESCE(SUM(amount_due), 0) AS total_due,
-                   COALESCE(SUM(amount_paid), 0) AS total_paid
-            FROM payments
-            WHERE school_id = :sid
-            GROUP BY status
+                   COALESCE(SUM(p.amount_due), 0) AS total_due,
+                   COALESCE(SUM(p.amount_paid), 0) AS total_paid
+            FROM payments p
+            WHERE p.school_id = :sid {yr_filter}
+            GROUP BY p.status
         """),
         {"sid": sid},
     ).mappings().all()
 
     by_level = db.execute(
-        text("""
+        text(f"""
             SELECT c.level,
                    COALESCE(SUM(p.amount_due), 0) AS expected,
                    COALESCE(SUM(p.amount_paid), 0) AS collected,
@@ -679,7 +778,7 @@ def get_recovery_dashboard(
             FROM payments p
             JOIN students st ON p.student_id = st.id
             JOIN classes c ON st.class_id = c.id
-            WHERE p.school_id = :sid
+            WHERE p.school_id = :sid {yr_filter}
             GROUP BY c.level
             ORDER BY remaining DESC
         """),
@@ -768,7 +867,6 @@ def get_engagement_dashboard(
         {"sid": sid},
     ).mappings().all()
 
-    # Corrélation engagement parental (messages lus vs non lus) -> moyenne élève
     impact_rows = db.execute(
         text("""
             SELECT
@@ -782,8 +880,9 @@ def get_engagement_dashboard(
                 FROM messages WHERE school_id = :sid GROUP BY receiver_parent_id
             ) msg ON msg.receiver_parent_id = st.parent_id
             LEFT JOIN (
-                SELECT student_id, AVG(score) AS avg_grade
-                FROM grades WHERE school_id = :sid GROUP BY student_id
+                SELECT g.student_id, SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0) AS avg_grade
+                FROM grades g JOIN subjects sub ON g.subject_id = sub.id
+                WHERE g.school_id = :sid GROUP BY g.student_id
             ) gr ON gr.student_id = st.id
             WHERE st.school_id = :sid AND st.status = 'active'
             GROUP BY parent_segment
@@ -827,13 +926,16 @@ def get_engagement_dashboard(
 # ==============================================================================
 @router.get("/early-warning")
 def get_early_warning_dashboard(
+    level: str = Query(default="ALL"),
     current_user: dict = Depends(require_roles(EXEC_ROLES)),
     db: Session = Depends(get_db),
 ):
     sid = current_user["school_id"]
+    lvl_filter = " AND c.level = :lvl" if level and level != "ALL" else ""
+    params: dict = {"sid": sid, "lvl": level}
 
     rows = db.execute(
-        text("""
+        text(f"""
             SELECT st.id AS student_id,
                    st.status AS student_status,
                    u.full_name AS student_name,
@@ -850,19 +952,22 @@ def get_early_warning_dashboard(
             LEFT JOIN users up ON st.parent_id = up.id
             LEFT JOIN classes c ON st.class_id = c.id
             LEFT JOIN (
-                SELECT student_id, AVG(score) AS avg_t1
-                FROM grades WHERE school_id = :sid AND trimester = 1 AND recorded_at >= DATE '2025-09-01'
-                GROUP BY student_id
+                SELECT g.student_id, SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0) AS avg_t1
+                FROM grades g JOIN subjects sub ON g.subject_id = sub.id
+                WHERE g.school_id = :sid AND g.trimester = 1 AND g.recorded_at >= DATE '2025-09-01'
+                GROUP BY g.student_id
             ) g1 ON g1.student_id = st.id
             LEFT JOIN (
-                SELECT student_id, AVG(score) AS avg_t3
-                FROM grades WHERE school_id = :sid AND trimester = 3 AND recorded_at >= DATE '2025-09-01'
-                GROUP BY student_id
+                SELECT g.student_id, SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0) AS avg_t3
+                FROM grades g JOIN subjects sub ON g.subject_id = sub.id
+                WHERE g.school_id = :sid AND g.trimester = 3 AND g.recorded_at >= DATE '2025-09-01'
+                GROUP BY g.student_id
             ) g3 ON g3.student_id = st.id
             LEFT JOIN (
-                SELECT student_id, AVG(score) AS avg_all
-                FROM grades WHERE school_id = :sid AND recorded_at >= DATE '2025-09-01'
-                GROUP BY student_id
+                SELECT g.student_id, SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0) AS avg_all
+                FROM grades g JOIN subjects sub ON g.subject_id = sub.id
+                WHERE g.school_id = :sid AND g.recorded_at >= DATE '2025-09-01'
+                GROUP BY g.student_id
             ) gall ON gall.student_id = st.id
             LEFT JOIN (
                 SELECT student_id, SUM(hours_missed) AS unjust_hours
@@ -874,13 +979,14 @@ def get_early_warning_dashboard(
                 FROM payments WHERE school_id = :sid AND status IN ('overdue', 'partial')
                 GROUP BY student_id
             ) pay ON pay.student_id = st.id
-            WHERE st.school_id = :sid
+            WHERE st.school_id = :sid {lvl_filter}
         """),
-        {"sid": sid},
+        params,
     ).mappings().all()
 
     if not rows:
         return {
+            "model_used": "RandomForestClassifier",
             "kpis": {"total_at_risk": 0, "critical_risk": 0, "high_risk": 0, "academic_risk": 0, "dropout_risk": 0, "financial_risk": 0},
             "risk_axes": [],
             "students": [],
@@ -917,20 +1023,18 @@ def get_early_warning_dashboard(
         recommendations = []
         risk_types = []
 
-        # Axe 1 : Risque d'échec académique
         if avg_all < 10.5 or grade_drop >= 1.8:
             academic_risk_cnt += 1
             risk_types.append("Échec scolaire")
             if avg_all < 10.5:
                 score += min(38, int((10.5 - avg_all) * 9))
-                factors.append(f"Moyenne faible ({avg_all:.2f}/20)")
+                factors.append(f"Moyenne pondérée ({avg_all:.2f}/20)")
                 recommendations.append("Inscrire en tutorat renforcé")
             if grade_drop >= 1.8:
                 score += 16
                 factors.append(f"Chute de -{grade_drop:.1f} pts (T1→T3)")
                 recommendations.append("Entretien pédagogique individuel")
 
-        # Axe 2 : Risque d'abandon / décrochage (IA RandomForest + assiduité)
         if unjust_hours >= 6 or dropout_prob_pct >= 55.0:
             dropout_risk_cnt += 1
             risk_types.append("Abandon / Décrochage")
@@ -942,7 +1046,6 @@ def get_early_warning_dashboard(
                 score += 14
                 factors.append(f"Probabilité abandon IA : {dropout_prob_pct}%")
 
-        # Axe 3 : Risque financier / impayés
         if unpaid > 0:
             financial_risk_cnt += 1
             risk_types.append("Impayé scolarité")
@@ -953,8 +1056,8 @@ def get_early_warning_dashboard(
         score = min(100, score)
 
         if score >= 40:
-            level = "CRITIQUE" if score >= 68 else "ÉLEVÉ"
-            if level == "CRITIQUE":
+            level_lbl = "CRITIQUE" if score >= 68 else "ÉLEVÉ"
+            if level_lbl == "CRITIQUE":
                 critical_count += 1
             else:
                 high_count += 1
@@ -966,7 +1069,7 @@ def get_early_warning_dashboard(
                 "parent_name": r["parent_name"],
                 "parent_email": r["parent_email"],
                 "risk_score": score,
-                "risk_level": level,
+                "risk_level": level_lbl,
                 "dropout_probability": dropout_prob_pct,
                 "risk_types": risk_types,
                 "avg_grade": round(avg_all, 2),
@@ -993,7 +1096,7 @@ def get_early_warning_dashboard(
             {"axis": "Risque Abandon (IA)", "count": dropout_risk_cnt},
             {"axis": "Risque Impayés", "count": financial_risk_cnt},
         ],
-        "students": at_risk_students[:40],
+        "students": at_risk_students[:50],
     }
 
 
@@ -1007,7 +1110,6 @@ def get_strategic_dashboard(
 ):
     sid = current_user["school_id"]
 
-    # 1. Données de base établissement & capacité
     school_info = db.execute(
         text("""
             SELECT
@@ -1023,7 +1125,6 @@ def get_strategic_dashboard(
     total_capacity = int(school_info["total_capacity"] or 220)
     total_classes = int(school_info["total_classes"] or 8)
 
-    # 2. Séries financières annuelles (2024-2025 vs 2025-2026) -> Prévision LinearRegression 2026-2027
     fin_years = db.execute(
         text("""
             SELECT
@@ -1044,7 +1145,6 @@ def get_strategic_dashboard(
     exp_2025 = float(fin_map.get(2025, {}).get("expected", 0) or 0)
     unpaid_2025 = max(0.0, exp_2025 - rev_2025)
 
-    # Prévision linéaire scikit-learn sur les revenus annuels
     if rev_2024 > 0 and rev_2025 > 0:
         reg_rev = LinearRegression().fit(np.array([[2024], [2025]]), np.array([rev_2024, rev_2025]))
         proj_rev_2026 = max(rev_2025, _safe_float(reg_rev.predict(np.array([[2026]]))[0]))
@@ -1053,7 +1153,6 @@ def get_strategic_dashboard(
         proj_rev_2026 = _safe_float(rev_2025 * 1.07)
         growth_rate = 7.0
 
-    # 3. Séries pédagogiques & modèle RandomForest d'importance des facteurs
     perf_rows = db.execute(
         text("""
             SELECT st.id AS student_id,
@@ -1065,13 +1164,19 @@ def get_strategic_dashboard(
                    COALESCE(pay.unpaid, 0) AS unpaid_balance
             FROM students st
             LEFT JOIN (
-                SELECT student_id, AVG(score) AS avg_t1 FROM grades WHERE school_id = :sid AND trimester = 1 GROUP BY student_id
+                SELECT g.student_id, SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0) AS avg_t1
+                FROM grades g JOIN subjects sub ON g.subject_id = sub.id
+                WHERE g.school_id = :sid AND g.trimester = 1 GROUP BY g.student_id
             ) g1 ON g1.student_id = st.id
             LEFT JOIN (
-                SELECT student_id, AVG(score) AS avg_t3 FROM grades WHERE school_id = :sid AND trimester = 3 GROUP BY student_id
+                SELECT g.student_id, SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0) AS avg_t3
+                FROM grades g JOIN subjects sub ON g.subject_id = sub.id
+                WHERE g.school_id = :sid AND g.trimester = 3 GROUP BY g.student_id
             ) g3 ON g3.student_id = st.id
             LEFT JOIN (
-                SELECT student_id, AVG(score) AS avg_all FROM grades WHERE school_id = :sid GROUP BY student_id
+                SELECT g.student_id, SUM(g.score * sub.coefficient) / NULLIF(SUM(sub.coefficient), 0) AS avg_all
+                FROM grades g JOIN subjects sub ON g.subject_id = sub.id
+                WHERE g.school_id = :sid GROUP BY g.student_id
             ) gall ON gall.student_id = st.id
             LEFT JOIN (
                 SELECT student_id, SUM(hours_missed) AS unjust_hours
@@ -1102,13 +1207,11 @@ def get_strategic_dashboard(
         ml_algo = "RandomForestClassifier"
         current_pass_rate = 75.0
 
-    # Prévision linéaire des effectifs 2026-2027 (croissance tendancielle +6.5%)
     est_students_2024 = max(1, int(round(active_students * 0.93)))
     reg_stu = LinearRegression().fit(np.array([[2024], [2025]]), np.array([est_students_2024, active_students]))
     proj_students_2026 = int(round(reg_stu.predict(np.array([[2026]]))[0]))
     proj_pass_rate_2026 = min(98.5, _safe_float(current_pass_rate + 2.4, 1))
 
-    # 4. Génération dynamique de recommandations stratégiques pour la Direction
     recommendations = []
     occ_rate = (active_students / max(1, total_capacity)) * 100
     if occ_rate >= 90:
