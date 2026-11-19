@@ -11,18 +11,18 @@
   --aceda-gold-300: #ffd166;
 
   /* Surfaces Glassmorphism */
-  --glass-sidebar-bg: rgba(4, 30, 66, 0.62);
-  --glass-card-bg: rgba(8, 45, 94, 0.34);
+  --glass-sidebar-bg: rgba(8, 45, 94, 0.96);
+  --glass-card-bg: rgba(15, 63, 125, 0.42);
   --glass-card-hover: rgba(15, 63, 125, 0.46);
-  --glass-active-tab: rgba(255, 183, 3, 0.17);
+  --glass-active-tab: rgba(255, 255, 255, 0.96);
   --glass-border: rgba(255, 255, 255, 0.14);
   --glass-gold-border: rgba(255, 183, 3, 0.38);
 
   /* Typographie & Dimensions */
   --text-main: #f8fafc;
-  --text-soft: rgba(226, 232, 240, 0.74);
---sidebar-width: 320px;
-  --sidebar-collapsed: 96px;
+  --text-soft: rgba(241, 245, 249, 0.90);
+  --sidebar-width: 284px;
+  --sidebar-collapsed: 116px;
   --curve-radius: 22px;
 
   /* Animations fluides */
@@ -752,4 +752,17 @@ body {
   .aceda-main-content {
     padding: 18px 14px;
   }
+}
+
+/* Readability and consistent focus states across the ACEDA interface */
+:where(button, input, select, textarea) {
+  font: inherit;
+}
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid rgba(255, 183, 3, 0.9);
+  outline-offset: 3px;
+}
+::selection {
+  color: #041e42;
+  background: #ffd166;
 }
