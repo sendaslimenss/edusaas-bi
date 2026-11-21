@@ -1,0 +1,1 @@
+New-Item -ItemType Directory -Force -Path "backend\migrations" | Out-Null; [IO.File]::WriteAllText("$PWD\backend\migrations\001_multi_tenant_onboarding.sql", (Get-Clipboard -Raw))
