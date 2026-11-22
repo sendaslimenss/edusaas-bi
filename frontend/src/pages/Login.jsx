@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   Lock, Mail, Building2, Sparkles, CheckCircle2, ShieldCheck,
-  ArrowRight, Eye, EyeOff, BarChart3, Layers
+  ArrowRight, Eye, EyeOff, BarChart3, Layers, KeyRound, ArrowLeft, Check, Circle
 } from "lucide-react";
 import api from "../api";
 
@@ -20,21 +20,47 @@ const DEMO_ACCOUNTS = [
   { role: "Élève", email: "eleve@nabeul.aceda.tn", school: "Nabeul" },
 ];
 
-export default function Login({ onLoginSuccess }) {
+export default function Login({ onLoginSuccess, activationToken = "", onCancelActivation }) {
+  const isActivationMode = Boolean(activationToken);
+
+  // États Connexion standard
   const [email, setEmail] = useState("directeur@tunis.aceda.tn");
   const [password, setPassword] = useState("Aceda2026!");
   const [showPassword, setShowPassword] = useState(false);
   const [campusFilter, setCampusFilter] = useState("ALL");
+
+  // États Activation de compte (?activate_token=...)
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+
+  // États communs
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
   const filteredAccounts = DEMO_ACCOUNTS.filter(
     (acc) => campusFilter === "ALL" || acc.school === campusFilter
   );
 
+  // Règles alignées avec _validate_strong_password() dans onboarding.py
+  const passwordChecks = useMemo(() => {
+    return [
+      { id: "len", label: "Au moins 10 caractères", ok: newPassword.length >= 10 },
+      { id: "upper", label: "Une lettre majuscule (A-Z)", ok: /[A-Z]/.test(newPassword) },
+      { id: "lower", label: "Une lettre minuscule (a-z)", ok: /[a-z]/.test(newPassword) },
+      { id: "digit", label: "Un chiffre (0-9)", ok: /[0-9]/.test(newPassword) },
+      { id: "symbol", label: "Un caractère spécial (!@#$%...)", ok: /[^A-Za-z0-9]/.test(newPassword) },
+    ];
+  }, [newPassword]);
+
+  const isStrongPassword = passwordChecks.every((rule) => rule.ok);
+  const passwordsMatch = newPassword.length > 0 && newPassword === confirmPassword;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setSuccessMsg("");
     setLoading(true);
     try {
       const { data } = await api.post("/api/auth/login", { email, password });
@@ -43,6 +69,42 @@ export default function Login({ onLoginSuccess }) {
       onLoginSuccess(data.user);
     } catch (err) {
       setError(err.response?.data?.detail || "Identifiants invalides ou serveur indisponible.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleActivateSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccessMsg("");
+
+    if (!isStrongPassword) {
+      setError("Veuillez respecter tous les critères de sécurité du mot de passe.");
+      return;
+    }
+    if (!passwordsMatch) {
+      setError("Les deux mots de passe ne correspondent pas.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data } = await api.post("/api/auth/activate-account", {
+        token: activationToken,
+        new_password: newPassword,
+      });
+      localStorage.setItem("aceda_token", data.access_token);
+      localStorage.setItem("aceda_user", JSON.stringify(data.user));
+      setSuccessMsg(`Compte activé pour ${data.user.school_name || "votre établissement"}. Redirection...`);
+      setTimeout(() => {
+        onLoginSuccess(data.user);
+      }, 700);
+    } catch (err) {
+      setError(
+        err.response?.data?.detail ||
+          "Lien d'activation invalide, expiré ou déjà utilisé."
+      );
     } finally {
       setLoading(false);
     }
@@ -73,7 +135,7 @@ export default function Login({ onLoginSuccess }) {
         {/* Liseré doré supérieur */}
         <div className="lg:col-span-12 h-[2px] w-full bg-gradient-to-r from-transparent via-amber-400/80 to-transparent" />
 
-        {/* COLONNE GAUCHE (7 cols) : Identité & Formulaire */}
+        {/* COLONNE GAUCHE (7 cols) : Identité & Formulaire (Activation ou Connexion) */}
         <div className="lg:col-span-7 p-8 sm:p-12 flex flex-col justify-between">
           <div>
             {/* En-tête de marque moderne */}
@@ -95,7 +157,10 @@ export default function Login({ onLoginSuccess }) {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-                    ACEDA <span className="bg-gradient-to-r from-amber-200 via-amber-400 to-amber-500 bg-clip-text text-transparent">Enterprise</span>
+                    ACEDA{" "}
+                    <span className="bg-gradient-to-r from-amber-200 via-amber-400 to-amber-500 bg-clip-text text-transparent">
+                      Enterprise
+                    </span>
                   </h1>
                 </div>
                 <p className="text-xs font-semibold tracking-widest uppercase text-amber-300/85 flex items-center gap-1.5 mt-1">
@@ -105,81 +170,216 @@ export default function Login({ onLoginSuccess }) {
               </div>
             </div>
 
-            <div className="mb-7">
-              <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-                Bienvenue sur votre portail exécutif
-              </h2>
-              <p className="text-sm text-slate-300/80 mt-1.5 leading-relaxed">
-                Pilotez vos campus, vos indicateurs financiers et la réussite académique dans un espace unifié et sécurisé.
-              </p>
-            </div>
-
-            {error && (
-              <div className="mb-5 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-400/40 text-rose-200 text-xs font-medium backdrop-blur-md">
-                {error}
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-widest text-amber-300/90 mb-2">
-                  Identifiant Professionnel
-                </label>
-                <div className="relative group">
-                  <Mail
-                    className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-amber-400 transition-colors"
-                    size={18}
-                  />
-                  <input
-                    type="text"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="Email ou nom d utilisateur"
-                    className="w-full pl-12 pr-4 py-3 rounded-2xl bg-[#020c1b]/65 border border-white/15 text-white text-sm placeholder-slate-500 focus:border-amber-400 focus:bg-[#020c1b]/85 focus:ring-4 focus:ring-amber-400/15 outline-none transition-all"
-                  />
+            {isActivationMode ? (
+              <>
+                <div className="mb-6">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/15 border border-amber-400/40 text-amber-300 text-[11px] font-bold uppercase tracking-wider mb-3">
+                    <KeyRound size={13} />
+                    <span>Activation de votre espace établissement</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                    Définissez votre mot de passe personnel
+                  </h2>
+                  <p className="text-sm text-slate-300/80 mt-1.5 leading-relaxed">
+                    Ce lien sécurisé à usage unique active définitivement votre compte administrateur et ouvre immédiatement votre portail dédié.
+                  </p>
                 </div>
-              </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-[11px] font-bold uppercase tracking-widest text-amber-300/90">
-                    Mot de passe
-                  </label>
-                  <span className="text-[11px] text-slate-400">Chiffrement TLS &amp; JWT</span>
-                </div>
-                <div className="relative group">
-                  <Lock
-                    className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-amber-400 transition-colors"
-                    size={18}
-                  />
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-12 pr-12 py-3 rounded-2xl bg-[#020c1b]/65 border border-white/15 text-white text-sm placeholder-slate-500 focus:border-amber-400 focus:bg-[#020c1b]/85 focus:ring-4 focus:ring-amber-400/15 outline-none transition-all"
-                  />
+                {error && (
+                  <div className="mb-5 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-400/40 text-rose-200 text-xs font-medium backdrop-blur-md">
+                    {error}
+                  </div>
+                )}
+
+                {successMsg && (
+                  <div className="mb-5 p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-400/40 text-emerald-200 text-xs font-semibold backdrop-blur-md flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                    <span>{successMsg}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleActivateSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-widest text-amber-300/90 mb-2">
+                      Nouveau mot de passe
+                    </label>
+                    <div className="relative group">
+                      <Lock
+                        className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-amber-400 transition-colors"
+                        size={18}
+                      />
+                      <input
+                        type={showNewPassword ? "text" : "password"}
+                        required
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Ex. MonEcole2026!"
+                        className="w-full pl-12 pr-12 py-3 rounded-2xl bg-[#020c1b]/65 border border-white/15 text-white text-sm placeholder-slate-500 focus:border-amber-400 focus:bg-[#020c1b]/85 focus:ring-4 focus:ring-amber-400/15 outline-none transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword((v) => !v)}
+                        className="absolute right-3.5 top-3 p-1 text-slate-400 hover:text-amber-300 transition cursor-pointer"
+                        aria-label="Afficher ou masquer le nouveau mot de passe"
+                      >
+                        {showNewPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-widest text-amber-300/90 mb-2">
+                      Confirmer le mot de passe
+                    </label>
+                    <div className="relative group">
+                      <Lock
+                        className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-amber-400 transition-colors"
+                        size={18}
+                      />
+                      <input
+                        type={showNewPassword ? "text" : "password"}
+                        required
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Répétez le mot de passe"
+                        className="w-full pl-12 pr-4 py-3 rounded-2xl bg-[#020c1b]/65 border border-white/15 text-white text-sm placeholder-slate-500 focus:border-amber-400 focus:bg-[#020c1b]/85 focus:ring-4 focus:ring-amber-400/15 outline-none transition-all"
+                      />
+                    </div>
+                    {confirmPassword.length > 0 && !passwordsMatch && (
+                      <p className="text-[11px] text-rose-300 mt-1.5">
+                        Les mots de passe ne sont pas identiques.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Checklist de complexité temps réel */}
+                  <div className="p-3.5 rounded-2xl bg-[#020c1b]/55 border border-white/10 space-y-1.5">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-1">
+                      Exigences de sécurité :
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-1.5">
+                      {passwordChecks.map((rule) => (
+                        <div
+                          key={rule.id}
+                          className={`flex items-center gap-2 text-xs ${
+                            rule.ok ? "text-emerald-300" : "text-slate-400"
+                          }`}
+                        >
+                          {rule.ok ? (
+                            <Check size={14} className="text-emerald-400 shrink-0" />
+                          ) : (
+                            <Circle size={12} className="text-slate-500 shrink-0" />
+                          )}
+                          <span>{rule.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    className="absolute right-3.5 top-3 p-1 text-slate-400 hover:text-amber-300 transition cursor-pointer"
-                    aria-label="Afficher ou masquer le mot de passe"
+                    type="submit"
+                    disabled={loading || !isStrongPassword || !passwordsMatch}
+                    className="w-full mt-2 py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 hover:from-amber-200 hover:to-amber-400 text-[#020c1b] font-extrabold text-sm tracking-wide shadow-[0_14px_34px_rgba(245,158,11,0.38)] hover:shadow-[0_18px_40px_rgba(255,183,3,0.52)] transform hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none cursor-pointer flex items-center justify-center gap-2"
                   >
-                    {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                    <span>
+                      {loading
+                        ? "Activation du compte en cours..."
+                        : "Activer mon compte & Accéder au portail"}
+                    </span>
+                    {!loading && <ArrowRight size={17} />}
                   </button>
-                </div>
-              </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full mt-2 py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 hover:from-amber-200 hover:to-amber-400 text-[#020c1b] font-extrabold text-sm tracking-wide shadow-[0_14px_34px_rgba(245,158,11,0.38)] hover:shadow-[0_18px_40px_rgba(255,183,3,0.52)] transform hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
-              >
-                <span>{loading ? "Authentification sécurisée..." : "Accéder à l'espace ACEDA"}</span>
-                {!loading && <ArrowRight size={17} />}
-              </button>
-            </form>
+                  {onCancelActivation && (
+                    <button
+                      type="button"
+                      onClick={onCancelActivation}
+                      className="w-full py-2 text-xs font-semibold text-slate-300 hover:text-amber-300 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <ArrowLeft size={14} />
+                      <span>Retour à la connexion standard</span>
+                    </button>
+                  )}
+                </form>
+              </>
+            ) : (
+              <>
+                <div className="mb-7">
+                  <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                    Bienvenue sur votre portail exécutif
+                  </h2>
+                  <p className="text-sm text-slate-300/80 mt-1.5 leading-relaxed">
+                    Pilotez vos campus, vos indicateurs financiers et la réussite académique dans un espace unifié et sécurisé.
+                  </p>
+                </div>
+
+                {error && (
+                  <div className="mb-5 p-3.5 rounded-2xl bg-rose-500/15 border border-rose-400/40 text-rose-200 text-xs font-medium backdrop-blur-md">
+                    {error}
+                  </div>
+                )}
+
+                <form onSubmit={handleSubmit} className="space-y-5">
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-widest text-amber-300/90 mb-2">
+                      Identifiant Professionnel
+                    </label>
+                    <div className="relative group">
+                      <Mail
+                        className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-amber-400 transition-colors"
+                        size={18}
+                      />
+                      <input
+                        type="text"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="Email ou nom d'utilisateur"
+                        className="w-full pl-12 pr-4 py-3 rounded-2xl bg-[#020c1b]/65 border border-white/15 text-white text-sm placeholder-slate-500 focus:border-amber-400 focus:bg-[#020c1b]/85 focus:ring-4 focus:ring-amber-400/15 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-[11px] font-bold uppercase tracking-widest text-amber-300/90">
+                        Mot de passe
+                      </label>
+                      <span className="text-[11px] text-slate-400">Chiffrement TLS &amp; JWT</span>
+                    </div>
+                    <div className="relative group">
+                      <Lock
+                        className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-amber-400 transition-colors"
+                        size={18}
+                      />
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full pl-12 pr-12 py-3 rounded-2xl bg-[#020c1b]/65 border border-white/15 text-white text-sm placeholder-slate-500 focus:border-amber-400 focus:bg-[#020c1b]/85 focus:ring-4 focus:ring-amber-400/15 outline-none transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="absolute right-3.5 top-3 p-1 text-slate-400 hover:text-amber-300 transition cursor-pointer"
+                        aria-label="Afficher ou masquer le mot de passe"
+                      >
+                        {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full mt-2 py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 hover:from-amber-200 hover:to-amber-400 text-[#020c1b] font-extrabold text-sm tracking-wide shadow-[0_14px_34px_rgba(245,158,11,0.38)] hover:shadow-[0_18px_40px_rgba(255,183,3,0.52)] transform hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <span>{loading ? "Authentification sécurisée..." : "Accéder à l'espace ACEDA"}</span>
+                    {!loading && <ArrowRight size={17} />}
+                  </button>
+                </form>
+              </>
+            )}
           </div>
 
           {/* Bandeau de garanties en bas à gauche */}
@@ -241,12 +441,13 @@ export default function Login({ onLoginSuccess }) {
             {/* Liste vitrée des comptes */}
             <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
               {filteredAccounts.map((acc) => {
-                const isSelected = email === acc.email;
+                const isSelected = !isActivationMode && email === acc.email;
                 return (
                   <button
                     key={acc.email}
                     type="button"
                     onClick={() => {
+                      if (isActivationMode && onCancelActivation) onCancelActivation();
                       setEmail(acc.email);
                       setPassword("Aceda2026!");
                     }}

@@ -1,15 +1,35 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard, DollarSign, BookOpen, Clock, ShieldAlert,
   Users, CreditCard, MessageSquare, PlusSquare, LogOut,
-  GraduationCap, ChevronLeft, Menu, X, Building2, Sparkles, TrendingUp, MapPin, UserCheck, Wallet, MessageCircle, BrainCircuit,Calendar, Layers, UserCog
+  ChevronLeft, Menu, X, Building2, Sparkles, MapPin, UserCheck, Wallet, MessageCircle, BrainCircuit, Calendar, Layers, UserCog
 } from "lucide-react";
 import Login from "./pages/Login";
 import BiDashboards from "./components/BiDashboards";
 import SaasWorkspace from "./components/SaasWorkspace";
 
+function extractActivationTokenFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("activate_token");
+  return token ? token.trim() : "";
+}
+
+function clearActivationTokenFromUrl() {
+  const url = new URL(window.location.href);
+  if (url.searchParams.has("activate_token")) {
+    url.searchParams.delete("activate_token");
+    const cleanSearch = url.searchParams.toString();
+    const cleanUrl = `${url.pathname}${cleanSearch ? `?${cleanSearch}` : ""}${url.hash}`;
+    window.history.replaceState({}, document.title, cleanUrl);
+  }
+}
+
 export default function App() {
+  const [activationToken, setActivationToken] = useState(() => extractActivationTokenFromUrl());
+
   const [user, setUser] = useState(() => {
+    // Si un lien d'activation est ouvert, on force l'écran d'activation plutôt qu'une ancienne session
+    if (extractActivationTokenFromUrl()) return null;
     const saved = localStorage.getItem("aceda_user");
     return saved ? JSON.parse(saved) : null;
   });
@@ -26,11 +46,24 @@ export default function App() {
   );
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [logoError, setLogoError] = useState(false);
+
+  useEffect(() => {
+    if (activationToken) {
+      localStorage.removeItem("aceda_token");
+      localStorage.removeItem("aceda_user");
+    }
+  }, [activationToken]);
 
   const handleLogin = (loggedUser) => {
+    clearActivationTokenFromUrl();
+    setActivationToken("");
     setUser(loggedUser);
     setNav(getDefaultTab(loggedUser.role));
+  };
+
+  const handleCancelActivation = () => {
+    clearActivationTokenFromUrl();
+    setActivationToken("");
   };
 
   const handleLogout = () => {
@@ -44,7 +77,15 @@ export default function App() {
     setMobileOpen(false);
   };
 
-  if (!user) return <Login onLoginSuccess={handleLogin} />;
+  if (!user || activationToken) {
+    return (
+      <Login
+        onLoginSuccess={handleLogin}
+        activationToken={activationToken}
+        onCancelActivation={handleCancelActivation}
+      />
+    );
+  }
 
   const biMenu = [
     { key: "general", label: "Vue Globale & Capacité", icon: LayoutDashboard, roles: ["director", "admin"] },

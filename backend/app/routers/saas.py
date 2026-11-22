@@ -259,7 +259,120 @@ def refresh_token(current_user: dict = Depends(get_current_user)):
 @router.get("/saas/me")
 def get_me(current_user: dict = Depends(get_current_user)):
     return current_user
+# ==============================================================================
+# ADMINISTRATION DES COMPTES UTILISATEURS (CRUD)
+# ==============================================================================
+@router.get("/saas/users")
+def list_users(
+    current_user: dict = Depends(require_roles(["admin", "director"])),
+    db: Session = Depends(get_db),
+):
+    sid = current_user["school_id"]
+    rows = db.execute(
+        text("""
+            SELECT id, full_name, email, username, role,
+                   COALESCE(must_change_password, FALSE) AS must_change_password
+            FROM users
+            WHERE school_id = :sid
+            ORDER BY full_name ASC
+        """),
+        {"sid": sid},
+    ).mappings().all()
+    return [dict(r) for r in rows]
 
+
+@router.post("/saas/users", status_code=status.HTTP_201_CREATED)
+def create_user(
+    payload: UserCreate,
+    current_user: dict = Depends(require_roles(["admin", "director"])),
+    db: Session = Depends(get_db),
+):
+    sid = current_user["school_id"]
+    clean_email = payload.email.strip().lower()
+
+    exists = db.execute(
+        text("SELECT id FROM users WHERE LOWER(email) = :email OR LOWER(username) = :email"),
+        {"email": clean_email},
+    ).first()
+    if exists:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cet email est déjà utilisé.",
+        )
+
+    res = db.execute(
+        text("""
+            INSERT INTO users (school_id, full_name, email, username, password_hash, role, must_change_password)
+            VALUES (:sid, :name, :email, :username, :pwd, :role, TRUE)
+            RETURNING id, full_name, email, role, must_change_password
+        """),
+        {
+            "sid": sid,
+            "name": payload.full_name.strip(),
+            "email": clean_email,
+            "username": clean_email,
+            "pwd": hash_password(payload.password),
+            "role": payload.role,
+        },
+    ).mappings().first()
+    db.commit()
+
+    return {"message": "Compte créé avec succès", "user": dict(res)}
+
+
+@router.patch("/saas/users/{user_id}")
+def update_user(
+    user_id: int,
+    payload: UserUpdate,
+    current_user: dict = Depends(require_roles(["admin", "director"])),
+    db: Session = Depends(get_db),
+):
+    sid = current_user["school_id"]
+    exists = db.execute(
+        text("SELECT id FROM users WHERE id = :uid AND school_id = :sid"),
+        {"uid": user_id, "sid": sid},
+    ).first()
+    if not exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
+
+    updates = []
+    params = {"uid": user_id, "sid": sid}
+    if payload.full_name:
+        updates.append("full_name = :name")
+        params["name"] = payload.full_name.strip()
+    if payload.role:
+        updates.append("role = :role")
+        params["role"] = payload.role
+    if payload.password:
+        updates.append("password_hash = :pwd")
+        params["pwd"] = hash_password(payload.password)
+
+    if updates:
+        db.execute(text(f"UPDATE users SET {', '.join(updates)} WHERE id = :uid AND school_id = :sid"), params)
+        db.commit()
+    return {"message": "Utilisateur mis à jour"}
+
+
+@router.delete("/saas/users/{user_id}")
+def delete_user(
+    user_id: int,
+    current_user: dict = Depends(require_roles(["admin", "director"])),
+    db: Session = Depends(get_db),
+):
+    sid = current_user["school_id"]
+    if user_id == current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vous ne pouvez pas supprimer votre propre compte connecté.",
+        )
+    res = db.execute(
+        text("DELETE FROM users WHERE id = :uid AND school_id = :sid"),
+        {"uid": user_id, "sid": sid},
+    )
+    if res.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
+    db.commit()
+    return {"message": "Utilisateur supprimé"}
 # ==============================================================================
 # RÉFÉRENTIELS, CLASSES, MATIÈRES & ENSEIGNANTS (CRUD)
 # ==============================================================================
