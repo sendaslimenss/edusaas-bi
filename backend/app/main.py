@@ -3,8 +3,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import check_db_connection
 from app.routers import saas, bi
-
+from app.routers import saas, bi, onboarding
 app = FastAPI(title="ACEDA – SaaS & BI")
+
 
 allowed_origins = [
     "http://localhost:5173",
@@ -25,6 +26,7 @@ app.add_middleware(
 
 app.include_router(saas.router)
 app.include_router(bi.router)
+app.include_router(onboarding.router)
 
 
 @app.get("/")

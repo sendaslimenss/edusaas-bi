@@ -1,5 +1,7 @@
 import os
 import time
+import hashlib
+import secrets
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import List
@@ -60,6 +62,20 @@ def hash_password(plain_password: str) -> str:
     return pwd_context.hash(plain_password)
 
 
+def generate_activation_token() -> tuple[str, str]:
+    """Génère un jeton brut (envoyé par email) et son empreinte SHA-256 (stockée en base)."""
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hash_token(raw_token)
+    return raw_token, token_hash
+
+def generate_one_time_token() -> tuple[str, str]:
+    """Génère un jeton à usage unique (brut + empreinte SHA-256)."""
+    return generate_activation_token()
+
+def hash_token(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     now = datetime.now(timezone.utc)
@@ -84,10 +100,16 @@ def get_current_user(
 
     user = db.execute(
         text("""
-            SELECT u.id, u.school_id, u.full_name, u.email, u.role,
-                   s.name AS school_name, s.city AS school_city
+            SELECT u.id,
+                   u.school_id,
+                   u.full_name,
+                   u.email,
+                   u.role,
+                   COALESCE(u.must_change_password, FALSE) AS must_change_password,
+                   s.name AS school_name,
+                   s.city AS school_city
             FROM users u
-            JOIN schools s ON u.school_id = s.id
+            LEFT JOIN schools s ON u.school_id = s.id
             WHERE u.id = :uid
         """),
         {"uid": int(user_id)},
@@ -96,19 +118,45 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilisateur introuvable")
 
-    if token_school_id is not None and int(token_school_id) != int(user["school_id"]):
+    db_school_id = user["school_id"]
+    if db_school_id is None:
+        # Compte super_admin (aucun établissement rattaché)
+        if token_school_id is not None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Contexte établissement invalide")
+    elif token_school_id is not None and int(token_school_id) != int(db_school_id):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Contexte établissement invalide")
 
     return dict(user)
 
 
-def require_roles(allowed_roles: List[str]):
+def require_password_changed(current_user: dict = Depends(get_current_user)):
+    """Bloque l'accès tant que l'utilisateur n'a pas remplacé son mot de passe temporaire."""
+    if current_user.get("must_change_password"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Changement de mot de passe obligatoire avant d'accéder à la plateforme.",
+        )
+    return current_user
+
+
+def require_roles(
+    allowed_roles: List[str],
+    allow_password_change_pending: bool = False,
+):
     def role_checker(current_user: dict = Depends(get_current_user)):
         if current_user["role"] not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Accès refusé pour le profil '{current_user['role']}'",
             )
+        if not allow_password_change_pending and current_user.get("must_change_password"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Changement de mot de passe obligatoire avant d'accéder à la plateforme.",
+            )
         return current_user
 
     return role_checker
+def generate_secure_temp_password(length: int = 14) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%"
+    return "".join(secrets.choice(alphabet) for _ in range(length))

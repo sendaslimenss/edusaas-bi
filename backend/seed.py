@@ -663,11 +663,11 @@ def sync_demo_accounts_only(conn):
         for role, (full_name, email) in cfg["demo_staff"].items():
             conn.execute(
                 text("""
-                    INSERT INTO users (school_id, full_name, email, password_hash, role)
-                    VALUES (:sid, :name, :email, :pwd, :role)
+                    INSERT INTO users (school_id, full_name, email, username, password_hash, role)
+                    VALUES (:sid, :name, :email, :username, :pwd, :role)
                     ON CONFLICT (email) DO NOTHING
                 """),
-                {"sid": school_id, "name": full_name, "email": email, "pwd": DEMO_PASSWORD_HASH, "role": role},
+                {"sid": school_id, "name": full_name, "email": email, "username": email.strip().lower(), "pwd": DEMO_PASSWORD_HASH, "role": role},
             )
 
 

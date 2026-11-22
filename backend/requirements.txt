@@ -10,3 +10,6 @@ pandas==2.2.3
 numpy==2.1.1
 scikit-learn==1.5.2
 faker==30.1.0
+httpx
+
+email-validator

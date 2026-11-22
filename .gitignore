@@ -8,3 +8,10 @@ dist/
 **/.env
 __pycache__/
 *.py[cod]
+venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+node_modules/
+dist/

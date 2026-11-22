@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -16,14 +16,26 @@ from app.auth import (
     clear_login_failures,
 )
 
+
 router = APIRouter(prefix="/api", tags=["SaaS Operations"])
 
 VALID_ROLES = ("admin", "director", "teacher", "accountant", "parent", "student")
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., min_length=3, max_length=255)
-    password: str = Field(..., min_length=1, max_length=255)
+    identifier: Optional[str] = None
+    email: Optional[str] = None
+    username: Optional[str] = None
+    password: str
+
+    def normalized_identifier(self) -> str:
+        raw = self.identifier or self.email or self.username or ""
+        return raw.strip().lower()
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class UserCreate(BaseModel):
@@ -124,45 +136,111 @@ class MessageCreate(BaseModel):
 # AUTHENTIFICATION & PROFIL COURANT
 # ==============================================================================
 @router.post("/auth/login")
-def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    clean_email = payload.email.strip().lower()
-    client_ip = request.client.host if request.client else "unknown"
-    rate_key = f"{client_ip}:{clean_email}"
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    ident = payload.normalized_identifier()
+    if not ident or not payload.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Identifiant (email ou nom d'utilisateur) et mot de passe requis.",
+        )
 
-    check_login_rate_limit(rate_key)
+    check_login_rate_limit(ident)
 
     user = db.execute(
         text("""
-            SELECT u.id, u.school_id, u.full_name, u.email, u.password_hash, u.role,
-                   s.name AS school_name, s.city AS school_city
+            SELECT u.id,
+                   u.school_id,
+                   u.full_name,
+                   u.email,
+                   u.username,
+                   u.password_hash,
+                   u.role,
+                   COALESCE(u.must_change_password, FALSE) AS must_change_password,
+                   s.name AS school_name,
+                   s.city AS school_city
             FROM users u
-            JOIN schools s ON u.school_id = s.id
-            WHERE LOWER(u.email) = :email
+            LEFT JOIN schools s ON u.school_id = s.id
+            WHERE LOWER(u.email) = :ident
+               OR LOWER(COALESCE(u.username, '')) = :ident
+            ORDER BY CASE WHEN LOWER(u.email) = :ident THEN 0 ELSE 1 END, u.id DESC
+            LIMIT 1
         """),
-        {"email": clean_email},
+        {"ident": ident},
     ).mappings().first()
 
     if not user or not verify_password(payload.password, user["password_hash"]):
-        record_login_failure(rate_key)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Identifiants incorrects")
+        record_login_failure(ident)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Identifiants invalides.",
+        )
 
-    clear_login_failures(rate_key)
+    clear_login_failures(ident)
 
-    token = create_access_token(
-        {"sub": str(user["id"]), "role": user["role"], "school_id": user["school_id"]}
+    must_change = bool(user["must_change_password"])
+    access_token = create_access_token(
+        {
+            "sub": str(user["id"]),
+            "school_id": user["school_id"],
+            "role": user["role"],
+        }
     )
+
     return {
-        "access_token": token,
+        "access_token": access_token,
         "token_type": "bearer",
+        "must_change_password": must_change,
         "user": {
             "id": user["id"],
             "school_id": user["school_id"],
-            "school_name": user["school_name"],
-            "school_city": user["school_city"],
             "full_name": user["full_name"],
             "email": user["email"],
+            "username": user["username"],
             "role": user["role"],
+            "school_name": user["school_name"],
+            "school_city": user["school_city"],
+            "must_change_password": must_change,
         },
+    }
+
+
+@router.post("/auth/change-password")
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.execute(
+        text("SELECT password_hash FROM users WHERE id = :uid"),
+        {"uid": current_user["id"]},
+    ).mappings().first()
+
+    if not row or not verify_password(payload.current_password, row["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mot de passe actuel incorrect.",
+        )
+
+    if verify_password(payload.new_password, row["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le nouveau mot de passe doit être différent de l'ancien.",
+        )
+
+    db.execute(
+        text("""
+            UPDATE users
+            SET password_hash = :new_pwd,
+                must_change_password = FALSE
+            WHERE id = :uid
+        """),
+        {"new_pwd": hash_password(payload.new_password), "uid": current_user["id"]},
+    )
+    db.commit()
+
+    return {
+        "message": "Mot de passe mis à jour avec succès.",
+        "must_change_password": False,
     }
 
 
@@ -181,138 +259,6 @@ def refresh_token(current_user: dict = Depends(get_current_user)):
 @router.get("/saas/me")
 def get_me(current_user: dict = Depends(get_current_user)):
     return current_user
-
-
-# ==============================================================================
-# ADMINISTRATION DES UTILISATEURS (6 PROFILS RBAC)
-# ==============================================================================
-@router.get("/saas/users")
-def list_users(
-    role_filter: Optional[str] = Query(None),
-    current_user: dict = Depends(require_roles(["admin", "director"])),
-    db: Session = Depends(get_db),
-):
-    sid = current_user["school_id"]
-    query = """
-        SELECT id, full_name, email, role, created_at
-        FROM users
-        WHERE school_id = :sid
-    """
-    params = {"sid": sid}
-    if role_filter and role_filter in VALID_ROLES:
-        query += " AND role = :role"
-        params["role"] = role_filter
-
-    query += """
-        ORDER BY CASE role
-            WHEN 'director' THEN 1 WHEN 'admin' THEN 2 WHEN 'accountant' THEN 3
-            WHEN 'teacher' THEN 4 WHEN 'parent' THEN 5 ELSE 6 END,
-        full_name ASC LIMIT 300
-    """
-    rows = db.execute(text(query), params).mappings().all()
-    return [dict(r) for r in rows]
-
-
-@router.post("/saas/users")
-def create_user(
-    payload: UserCreate,
-    current_user: dict = Depends(require_roles(["admin", "director"])),
-    db: Session = Depends(get_db),
-):
-    sid = current_user["school_id"]
-    clean_email = payload.email.strip().lower()
-
-    exists = db.execute(text("SELECT id FROM users WHERE LOWER(email) = :email"), {"email": clean_email}).first()
-    if exists:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette adresse email est déjà utilisée")
-
-    res = db.execute(
-        text("""
-            INSERT INTO users (school_id, full_name, email, password_hash, role)
-            VALUES (:sid, :name, :email, :pwd, :role)
-            RETURNING id, full_name, email, role
-        """),
-        {
-            "sid": sid,
-            "name": payload.full_name.strip(),
-            "email": clean_email,
-            "pwd": hash_password(payload.password),
-            "role": payload.role,
-        },
-    ).mappings().first()
-    db.commit()
-    return {"message": "Compte utilisateur créé avec succès", "user": dict(res)}
-
-
-@router.patch("/saas/users/{user_id}")
-def update_user(
-    user_id: int,
-    payload: UserUpdate,
-    current_user: dict = Depends(require_roles(["admin", "director"])),
-    db: Session = Depends(get_db),
-):
-    sid = current_user["school_id"]
-    target = db.execute(
-        text("SELECT id, role FROM users WHERE id = :uid AND school_id = :sid"),
-        {"uid": user_id, "sid": sid},
-    ).mappings().first()
-    if not target:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable dans cet établissement")
-
-    updates = []
-    params = {"uid": user_id, "sid": sid}
-    if payload.full_name:
-        updates.append("full_name = :name")
-        params["name"] = payload.full_name.strip()
-    if payload.role:
-        updates.append("role = :role")
-        params["role"] = payload.role
-    if payload.password:
-        updates.append("password_hash = :pwd")
-        params["pwd"] = hash_password(payload.password)
-
-    if not updates:
-        return {"message": "Aucune modification appliquée"}
-
-    db.execute(text(f"UPDATE users SET {', '.join(updates)} WHERE id = :uid AND school_id = :sid"), params)
-    db.commit()
-    return {"message": "Utilisateur mis à jour avec succès"}
-
-
-@router.delete("/saas/users/{user_id}")
-def delete_user(
-    user_id: int,
-    current_user: dict = Depends(require_roles(["admin"])),
-    db: Session = Depends(get_db),
-):
-    sid = current_user["school_id"]
-    if user_id == current_user["id"]:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Impossible de supprimer votre propre compte")
-
-    target = db.execute(
-        text("SELECT id, email FROM users WHERE id = :uid AND school_id = :sid"),
-        {"uid": user_id, "sid": sid},
-    ).mappings().first()
-    if not target:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
-
-    if target["email"].endswith("@tunis.aceda.tn") or target["email"].endswith("@nabeul.aceda.tn"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Les 12 comptes officiels de démonstration sont protégés contre la suppression",
-        )
-
-    try:
-        db.execute(text("DELETE FROM users WHERE id = :uid AND school_id = :sid"), {"uid": user_id, "sid": sid})
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Impossible de supprimer cet utilisateur car il est lié à un dossier élève, des notes ou des affectations",
-        )
-    return {"message": "Utilisateur supprimé avec succès"}
-
 
 # ==============================================================================
 # RÉFÉRENTIELS, CLASSES, MATIÈRES & ENSEIGNANTS (CRUD)
@@ -773,7 +719,6 @@ def list_students(current_user: dict = Depends(get_current_user), db: Session = 
     rows = db.execute(text(query), params).mappings().all()
     return [dict(r) for r in rows]
 
-
 @router.post("/saas/students")
 def create_student(
     payload: StudentCreate,
@@ -783,11 +728,17 @@ def create_student(
     sid = current_user["school_id"]
     clean_email = payload.email.strip().lower()
 
-    cls = db.execute(text("SELECT id FROM classes WHERE id = :cid AND school_id = :sid"), {"cid": payload.class_id, "sid": sid}).first()
+    cls = db.execute(
+        text("SELECT id FROM classes WHERE id = :cid AND school_id = :sid"),
+        {"cid": payload.class_id, "sid": sid},
+    ).first()
     if not cls:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Classe introuvable dans cet établissement")
 
-    if db.execute(text("SELECT id FROM users WHERE LOWER(email) = :email"), {"email": clean_email}).first():
+    if db.execute(
+        text("SELECT id FROM users WHERE LOWER(email) = :email OR LOWER(username) = :email"),
+        {"email": clean_email},
+    ).first():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="L'email de l'élève est déjà utilisé")
 
     parent_id = payload.parent_id
@@ -811,28 +762,30 @@ def create_student(
         else:
             parent_id = db.execute(
                 text("""
-                    INSERT INTO users (school_id, full_name, email, password_hash, role)
-                    VALUES (:sid, :name, :email, :pwd, 'parent')
+                    INSERT INTO users (school_id, full_name, email, username, password_hash, role, must_change_password)
+                    VALUES (:sid, :name, :email, :username, :pwd, 'parent', TRUE)
                     RETURNING id
                 """),
                 {
                     "sid": sid,
                     "name": payload.parent_name.strip(),
                     "email": p_email,
+                    "username": p_email,
                     "pwd": hash_password(payload.password),
                 },
             ).scalar()
 
     student_user_id = db.execute(
         text("""
-            INSERT INTO users (school_id, full_name, email, password_hash, role)
-            VALUES (:sid, :name, :email, :pwd, 'student')
+            INSERT INTO users (school_id, full_name, email, username, password_hash, role, must_change_password)
+            VALUES (:sid, :name, :email, :username, :pwd, 'student', TRUE)
             RETURNING id
         """),
         {
             "sid": sid,
             "name": payload.full_name.strip(),
             "email": clean_email,
+            "username": clean_email,
             "pwd": hash_password(payload.password),
         },
     ).scalar()
@@ -855,8 +808,6 @@ def create_student(
 
     db.commit()
     return {"message": "Élève inscrit avec succès", "student_id": student_id}
-
-
 @router.patch("/saas/students/{student_id}")
 def update_student(
     student_id: int,

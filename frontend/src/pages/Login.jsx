@@ -131,11 +131,11 @@ export default function Login({ onLoginSuccess }) {
                     size={18}
                   />
                   <input
-                    type="email"
+                    type="text"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="nom@campus.aceda.tn"
+                    placeholder="Email ou nom d utilisateur"
                     className="w-full pl-12 pr-4 py-3 rounded-2xl bg-[#020c1b]/65 border border-white/15 text-white text-sm placeholder-slate-500 focus:border-amber-400 focus:bg-[#020c1b]/85 focus:ring-4 focus:ring-amber-400/15 outline-none transition-all"
                   />
                 </div>
