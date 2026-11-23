@@ -394,17 +394,17 @@ def send_school_admin_credentials_email(
       </table>
       <h3 style="color:#fbbf24;font-size:15px;">Activation sécurisée de votre compte</h3>
       <p style="line-height:1.6;color:#e2e8f0;">
-        Pour des raisons de sécurité, aucun mot de passe n'est transmis en clair. Cliquez sur le bouton ci-dessous
+Pour des raisons de sécurité, aucun mot de passe n'est transmis en clair. Cliquez sur le bouton ci-dessous
         (lien à usage unique valable <strong>24 heures</strong>) afin de définir votre mot de passe personnel et accéder à votre portail :
       </p>
       <p style="margin:24px 0;">
-        <a href="{activation_url}" style="background:#fbbf24;color:#070d1f;padding:13px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
+        <a href="{activation_url}" target="_blank" rel="noopener noreferrer" style="background:#fbbf24;color:#070d1f;padding:13px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
           Activer mon compte et définir mon mot de passe
         </a>
       </p>
       <p style="font-size:12px;color:#94a3b8;border-top:1px solid #1e293b;padding-top:14px;">
-        Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :<br/>
-        <span style="color:#38bdf8;word-break:break-all;">{activation_url}</span>
+        Si le bouton ne fonctionne pas, cliquez sur ce lien ou copiez-le dans votre navigateur :<br/>
+        <a href="{activation_url}" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;word-break:break-all;text-decoration:underline;">{activation_url}</a>
       </p>
     </div>
     """
