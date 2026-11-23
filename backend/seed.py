@@ -1,4 +1,6 @@
+import os
 import random
+import sys
 from datetime import date, timedelta
 from faker import Faker
 from passlib.context import CryptContext
@@ -81,8 +83,6 @@ LEVEL_TUITION_2025 = {
     "Baccalauréat": 980.00,
 }
 
-import os
-import sys
 
 def reset_database(conn):
     if os.getenv("CONFIRM_RESET") != "YES" or "--force-reset" not in sys.argv:
@@ -91,6 +91,8 @@ def reset_database(conn):
             "Exécutez avec CONFIRM_RESET=YES et --force-reset uniquement en développement local."
         )
     conn.execute(text("TRUNCATE TABLE schools RESTART IDENTITY CASCADE;"))
+
+
 def _generate_year_records(
     school_id: int,
     student_id: int,
@@ -263,11 +265,18 @@ def seed_school(conn, school_name: str, city: str, total_capacity: int):
     for role, (full_name, email) in cfg["demo_staff"].items():
         r = conn.execute(
             text("""
-                INSERT INTO users (school_id, full_name, email, password_hash, role)
-                VALUES (:sid, :name, :email, :pwd, :role)
+                INSERT INTO users (school_id, full_name, email, username, password_hash, role)
+                VALUES (:sid, :name, :email, :username, :pwd, :role)
                 RETURNING id
             """),
-            {"sid": school_id, "name": full_name, "email": email, "pwd": DEMO_PASSWORD_HASH, "role": role},
+            {
+                "sid": school_id,
+                "name": full_name,
+                "email": email,
+                "username": email.strip().lower(),
+                "pwd": DEMO_PASSWORD_HASH,
+                "role": role,
+            },
         )
         demo_ids[role] = r.scalar()
 
@@ -651,6 +660,7 @@ def seed_school(conn, school_name: str, city: str, total_capacity: int):
         f"{len(payments_batch)} échéances financières, {len(messages_batch)} notifications."
     )
 
+
 def sync_demo_accounts_only(conn):
     """Vérifie ou restaure uniquement les 12 comptes de démonstration sans altérer les données historiques."""
     for city, cfg in CAMPUS_CONFIGS.items():
@@ -667,8 +677,73 @@ def sync_demo_accounts_only(conn):
                     VALUES (:sid, :name, :email, :username, :pwd, :role)
                     ON CONFLICT (email) DO NOTHING
                 """),
-                {"sid": school_id, "name": full_name, "email": email, "username": email.strip().lower(), "pwd": DEMO_PASSWORD_HASH, "role": role},
+                {
+                    "sid": school_id,
+                    "name": full_name,
+                    "email": email,
+                    "username": email.strip().lower(),
+                    "pwd": DEMO_PASSWORD_HASH,
+                    "role": role,
+                },
             )
+
+
+def ensure_super_admin_account(conn):
+    """Crée ou synchronise le compte Super Admin (school_id = NULL) sans altérer les tenants."""
+    sa_email = os.getenv("SUPER_ADMIN_EMAIL", "sendaslimenss@gmail.com").strip().lower()
+    raw_env_password = os.getenv("SUPER_ADMIN_PASSWORD", "").strip()
+    sa_password = raw_env_password or "AcedaSuperAdmin2026!"
+    sa_hash = pwd_context.hash(sa_password)
+
+    existing = conn.execute(
+        text("SELECT id, school_id, role FROM users WHERE LOWER(TRIM(email)) = :email"),
+        {"email": sa_email},
+    ).mappings().first()
+
+    if not existing:
+        conn.execute(
+            text("""
+                INSERT INTO users (
+                    school_id, full_name, email, username, password_hash,
+                    role, must_change_password, is_active
+                )
+                VALUES (
+                    NULL, 'Super Administrateur ACEDA', :email, 'superadmin.aceda', :pwd,
+                    'super_admin', FALSE, TRUE
+                )
+            """),
+            {"email": sa_email, "pwd": sa_hash},
+        )
+        print(f"[SUPER ADMIN] Compte créé avec succès : {sa_email}")
+    else:
+        if existing["school_id"] is not None:
+            raise RuntimeError(
+                f"Conflit critique : l'email Super Admin ({sa_email}) est déjà rattaché à l'établissement ID={existing['school_id']}."
+            )
+        if raw_env_password:
+            conn.execute(
+                text("""
+                    UPDATE users
+                    SET password_hash = :pwd,
+                        role = 'super_admin',
+                        must_change_password = FALSE,
+                        is_active = TRUE
+                    WHERE id = :uid
+                """),
+                {"pwd": sa_hash, "uid": existing["id"]},
+            )
+        else:
+            conn.execute(
+                text("""
+                    UPDATE users
+                    SET role = 'super_admin',
+                        must_change_password = FALSE,
+                        is_active = TRUE
+                    WHERE id = :uid
+                """),
+                {"uid": existing["id"]},
+            )
+        print(f"[SUPER ADMIN] Compte déjà présent et synchronisé : {sa_email}")
 
 
 if __name__ == "__main__":
@@ -678,6 +753,7 @@ if __name__ == "__main__":
         if existing_schools and not force_reset:
             print("[PROTECTION ACTIVE] Les établissements existent déjà dans Neon. Aucune donnée supprimée.")
             sync_demo_accounts_only(conn)
+            ensure_super_admin_account(conn)
             for s in existing_schools:
                 g_cnt = conn.execute(text("SELECT COUNT(*) FROM grades WHERE school_id = :sid"), {"sid": s["id"]}).scalar()
                 st_cnt = conn.execute(text("SELECT COUNT(*) FROM students WHERE school_id = :sid"), {"sid": s["id"]}).scalar()
@@ -686,6 +762,7 @@ if __name__ == "__main__":
             if force_reset:
                 print("[RESET AUTORISÉ] Réinitialisation complète demandée...")
                 reset_database(conn)
+            ensure_super_admin_account(conn)
             seed_school(conn, "Lycée Pilote ACEDA Tunis", "Tunis", 215)
             seed_school(conn, "Groupe Scolaire ACEDA Nabeul", "Nabeul", 215)
             print("Base de données PostgreSQL ACEDA peuplée avec succès !")

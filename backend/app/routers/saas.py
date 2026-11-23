@@ -10,6 +10,7 @@ from app.auth import (
     hash_password,
     create_access_token,
     get_current_user,
+    require_password_changed,
     require_roles,
     check_login_rate_limit,
     record_login_failure,
@@ -18,6 +19,14 @@ from app.auth import (
 
 
 router = APIRouter(prefix="/api", tags=["SaaS Operations"])
+def get_tenant_user(current_user: dict = Depends(require_password_changed)) -> dict:
+    """Garantit qu'un utilisateur d'établissement possède un school_id valide."""
+    if current_user.get("school_id") is None:
+        raise HTTPException(
+           status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cet espace opérationnel est réservé aux comptes rattachés à un établissement.",
+        )
+    return current_user
 
 VALID_ROLES = ("admin", "director", "teacher", "accountant", "parent", "student")
 
@@ -328,6 +337,11 @@ def update_user(
     db: Session = Depends(get_db),
 ):
     sid = current_user["school_id"]
+    if user_id == current_user["id"] and payload.role and payload.role != current_user["role"]:
+       raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vous ne pouvez pas modifier votre propre rôle.",
+       )
     exists = db.execute(
         text("SELECT id FROM users WHERE id = :uid AND school_id = :sid"),
         {"uid": user_id, "sid": sid},
@@ -377,7 +391,7 @@ def delete_user(
 # RÉFÉRENTIELS, CLASSES, MATIÈRES & ENSEIGNANTS (CRUD)
 # ==============================================================================
 @router.get("/saas/referentials")
-def get_referentials(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_referentials(current_user: dict = Depends(get_tenant_user), db: Session = Depends(get_db)):
     sid = current_user["school_id"]
     role = current_user["role"]
     uid = current_user["id"]
@@ -408,7 +422,9 @@ def get_referentials(current_user: dict = Depends(get_current_user), db: Session
         classes = db.execute(
             text("""
                 SELECT c.id, c.name, c.level, c.max_capacity, c.room_name,
+                       COUNT(st.id) FILTER (WHERE st.status = 'active') AS student_count,
                        COUNT(st.id) FILTER (WHERE st.status = 'active') AS active_students
+                       
                 FROM classes c
                 LEFT JOIN students st ON st.class_id = c.id AND st.school_id = :sid
                 WHERE c.school_id = :sid
@@ -667,7 +683,7 @@ def delete_teacher_assignment(
 @router.get("/saas/schedules")
 def list_schedules(
     class_id: Optional[int] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_tenant_user),
     db: Session = Depends(get_db),
 ):
     sid = current_user["school_id"]
@@ -676,7 +692,10 @@ def list_schedules(
 
     query = """
         SELECT sc.id, sc.class_id, sc.subject_id, sc.teacher_id,
-               sc.day_of_week, sc.start_time, sc.end_time, sc.room_name,
+        sc.day_of_week,
+             TO_CHAR(sc.start_time, 'HH24:MI') AS start_time,
+               TO_CHAR(sc.end_time, 'HH24:MI') AS end_time,
+               sc.room_name,
                c.name AS class_name,
                sub.name AS subject_name,
                u.full_name AS teacher_name
@@ -735,8 +754,8 @@ def create_schedule(
             SELECT id FROM schedules
             WHERE school_id = :sid
               AND day_of_week = :day
-              AND start_time < :end_t
-              AND end_time > :start_t
+            AND start_time < CAST(:end_t AS TIME)
+           AND end_time > CAST(:start_t AS TIME)
               AND (class_id = :cid OR teacher_id = :tid OR LOWER(room_name) = LOWER(:room))
         """),
         {
@@ -758,7 +777,7 @@ def create_schedule(
     db.execute(
         text("""
             INSERT INTO schedules (school_id, class_id, subject_id, teacher_id, day_of_week, start_time, end_time, room_name)
-            VALUES (:sid, :cid, :subid, :tid, :day, :start_t, :end_t, :room)
+            VALUES (:sid, :cid, :subid, :tid, :day, CAST(:start_t AS TIME), CAST(:end_t AS TIME), :room)
         """),
         {
             "sid": sid,
@@ -793,7 +812,7 @@ def delete_schedule(
 # GESTION DES ÉLÈVES (CRUD) & BULLETINS
 # ==============================================================================
 @router.get("/saas/students")
-def list_students(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_students(current_user: dict = Depends(get_tenant_user), db: Session = Depends(get_db)):
     sid = current_user["school_id"]
     role = current_user["role"]
     uid = current_user["id"]
@@ -1324,7 +1343,7 @@ def settle_payment(
 # COMMUNICATION & NOTIFICATIONS PARENTS
 # ==============================================================================
 @router.get("/saas/messages")
-def list_messages(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_messages(current_user: dict = Depends(get_tenant_user), db: Session = Depends(get_db)):
     sid = current_user["school_id"]
     role = current_user["role"]
     uid = current_user["id"]

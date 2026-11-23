@@ -161,29 +161,6 @@ main *::-webkit-scrollbar-thumb:hover {
     box-shadow: none !important;
   }
 }
-/* Force readable contrast across all inputs, dropdown lists, and tables */
-:root {
-  color-scheme: light;
-}
-
-input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
-select,
-textarea {
-  background-color: #ffffff !important;
-  color: #0f172a !important;
-}
-
-input:not([type="range"]):not([type="checkbox"]):not([type="radio"])::placeholder,
-textarea::placeholder {
-  color: #64748b !important;
-  opacity: 1;
-}
-
-select option,
-select optgroup {
-  background-color: #ffffff !important;
-  color: #0f172a !important;
-}
 
 /* Fix browser autofill white-on-white text */
 input:-webkit-autofill,

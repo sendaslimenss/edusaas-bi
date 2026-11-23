@@ -13,10 +13,10 @@ from app.auth import (
     get_current_user,
     hash_password,
     hash_token,
-    require_roles,
+    require_super_admin,
     verify_password,
 )
-from app.database import engine, get_db
+from app.database import get_db
 from app.services.email_service import (
     EmailDeliveryError,
     send_school_admin_credentials_email,
@@ -27,6 +27,7 @@ router = APIRouter(tags=["Multi-Tenant Onboarding"])
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{4,40}$")
 PHONE_RE = re.compile(r"^\+?[0-9\s\-()]{7,25}$")
+RESERVED_USERNAMES = {"admin", "superadmin", "super_admin", "root", "system", "aceda", "support"}
 
 
 class SchoolRegistrationIn(BaseModel):
@@ -46,7 +47,7 @@ class SchoolRegistrationIn(BaseModel):
     def validate_phone(cls, v: str) -> str:
         cleaned = v.strip()
         if not PHONE_RE.match(cleaned):
-            raise ValueError("Numéro de téléphone invalide")
+            raise ValueError("Numéro de téléphone invalide (7 à 25 chiffres/caractères autorisés).")
         return cleaned
 
     @field_validator("requested_username")
@@ -54,12 +55,14 @@ class SchoolRegistrationIn(BaseModel):
     def validate_username(cls, v: str) -> str:
         cleaned = v.strip().lower()
         if not USERNAME_RE.match(cleaned):
-            raise ValueError("Le nom d'utilisateur doit contenir 4 à 40 caractères (lettres, chiffres, ., _, -)")
+            raise ValueError("Le nom d'utilisateur doit contenir 4 à 40 caractères (lettres, chiffres, ., _, -).")
+        if cleaned in RESERVED_USERNAMES:
+            raise ValueError("Ce nom d'utilisateur est réservé par la plateforme.")
         return cleaned
 
 
 class RejectRequestIn(BaseModel):
-    reason: str = Field(default="Demande non retenue par l'administration centrale.", max_length=500)
+    reason: str = Field(..., min_length=5, max_length=500)
 
 
 class ActivateAccountIn(BaseModel):
@@ -93,7 +96,7 @@ def register_new_school(payload: SchoolRegistrationIn, db: Session = Depends(get
     admin_email = payload.admin_email.strip().lower()
     username = payload.requested_username.strip().lower()
 
-    # Check existing schools & users before insertion
+    # Vérification des doublons dans les établissements existants
     existing_school = db.execute(
         text("SELECT id FROM schools WHERE LOWER(TRIM(name)) = :n OR LOWER(TRIM(COALESCE(email, ''))) = :e"),
         {"n": school_name.lower(), "e": school_email},
@@ -101,12 +104,33 @@ def register_new_school(payload: SchoolRegistrationIn, db: Session = Depends(get
     if existing_school:
         raise HTTPException(status_code=409, detail="Un établissement avec ce nom ou cet email existe déjà.")
 
+    # Vérification des doublons dans les utilisateurs existants
     existing_user = db.execute(
-        text("SELECT id FROM users WHERE LOWER(username) = :u OR LOWER(email) = :ae"),
+        text("SELECT id FROM users WHERE LOWER(TRIM(COALESCE(username, ''))) = :u OR LOWER(TRIM(email)) = :ae"),
         {"u": username, "ae": admin_email},
     ).first()
     if existing_user:
         raise HTTPException(status_code=409, detail="Ce nom d'utilisateur ou cet email administrateur est déjà utilisé.")
+
+    # Vérification des demandes en cours ou déjà approuvées
+    existing_req = db.execute(
+        text("""
+            SELECT id FROM school_registration_requests
+            WHERE status IN ('PENDING', 'APPROVED')
+              AND (
+                  LOWER(TRIM(school_name)) = :n
+                  OR LOWER(TRIM(school_email)) = :e
+                  OR LOWER(TRIM(requested_username)) = :u
+                  OR LOWER(TRIM(admin_email)) = :ae
+              )
+        """),
+        {"n": school_name.lower(), "e": school_email, "u": username, "ae": admin_email},
+    ).first()
+    if existing_req:
+        raise HTTPException(
+            status_code=409,
+            detail="Une demande est déjà en cours de traitement ou approuvée pour cet établissement ou cet identifiant.",
+        )
 
     try:
         row = db.execute(
@@ -146,28 +170,51 @@ def register_new_school(payload: SchoolRegistrationIn, db: Session = Depends(get
 
     reg_dict = dict(row)
 
-    # Real email notification to Super Admin; fail visibly if email delivery fails
+    # Notification Resend non bloquante : une erreur email ne supprime jamais la demande enregistrée
+    email_sent = True
+    email_message_id = None
+    email_warning = None
     try:
-        msg_id = send_super_admin_registration_alert(db, reg_dict)
+        email_message_id = send_super_admin_registration_alert(db, reg_dict)
     except EmailDeliveryError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Demande enregistrée (#{reg_dict['id']}), mais l'envoi de l'email au Super Admin a échoué : {exc}",
-        )
+        email_sent = False
+        email_warning = str(exc)
 
     return {
-        "message": "Demande d'inscription enregistrée avec succès. En attente de validation par le Super Administrateur.",
+        "message": "Votre demande d'inscription a été enregistrée avec le statut PENDING. Elle sera examinée par le Super Administrateur.",
         "request_id": reg_dict["id"],
         "request_uuid": reg_dict["request_uuid"],
         "status": "PENDING",
-        "email_message_id": msg_id,
+        "email_sent": email_sent,
+        "email_message_id": email_message_id,
+        "email_warning": email_warning,
     }
+
+
+@router.get("/api/super-admin/stats")
+def get_super_admin_stats(
+    current_user: dict = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    stats = db.execute(
+        text("""
+            SELECT
+                (SELECT COUNT(*) FROM schools) AS total_schools,
+                (SELECT COUNT(*) FROM school_registration_requests) AS total_requests,
+                (SELECT COUNT(*) FROM school_registration_requests WHERE status = 'PENDING') AS pending_requests,
+                (SELECT COUNT(*) FROM school_registration_requests WHERE status = 'APPROVED') AS approved_requests,
+                (SELECT COUNT(*) FROM school_registration_requests WHERE status = 'REJECTED') AS rejected_requests,
+                (SELECT COUNT(*) FROM email_delivery_logs WHERE status = 'SENT') AS emails_sent,
+                (SELECT COUNT(*) FROM email_delivery_logs WHERE status = 'FAILED') AS emails_failed
+        """)
+    ).mappings().first()
+    return dict(stats)
 
 
 @router.get("/api/super-admin/registrations")
 def list_school_registrations(
     status_filter: str | None = None,
-    current_user: dict = Depends(require_roles(["super_admin"])),
+    current_user: dict = Depends(require_super_admin),
     db: Session = Depends(get_db),
 ):
     query = """
@@ -192,7 +239,7 @@ def list_school_registrations(
 
 @router.get("/api/super-admin/schools")
 def list_all_tenants(
-    current_user: dict = Depends(require_roles(["super_admin"])),
+    current_user: dict = Depends(require_super_admin),
     db: Session = Depends(get_db),
 ):
     rows = db.execute(
@@ -209,10 +256,27 @@ def list_all_tenants(
     return [dict(r) for r in rows]
 
 
+@router.get("/api/super-admin/email-logs")
+def list_email_logs(
+    current_user: dict = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    rows = db.execute(
+        text("""
+            SELECT id, recipient_email, email_type, subject, provider,
+                   provider_message_id, status, error_message, related_request_id, created_at
+            FROM email_delivery_logs
+            ORDER BY created_at DESC
+            LIMIT 50
+        """)
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
 @router.post("/api/super-admin/registrations/{request_id}/approve")
 def approve_school_registration(
     request_id: int,
-    current_user: dict = Depends(require_roles(["super_admin"])),
+    current_user: dict = Depends(require_super_admin),
     db: Session = Depends(get_db),
 ):
     temp_password = generate_secure_temp_password(16)
@@ -220,7 +284,7 @@ def approve_school_registration(
     raw_token, token_hash = generate_one_time_token()
     expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
 
-    # Atomic PostgreSQL transaction with row-level lock (FOR UPDATE)
+    # Transaction atomique PostgreSQL + verrouillage exclusif SELECT FOR UPDATE
     try:
         reg = db.execute(
             text("""
@@ -241,7 +305,6 @@ def approve_school_registration(
                 detail=f"Cette demande a déjà été traitée (statut actuel : {reg['status']}).",
             )
 
-        # 1 & 2. Create isolated school record with unique tenant_uuid
         school_row = db.execute(
             text("""
                 INSERT INTO schools (name, email, phone, country, city, address, total_capacity, status)
@@ -260,7 +323,6 @@ def approve_school_registration(
         new_school_id = int(school_row["id"])
         tenant_uuid = school_row["tenant_uuid"]
 
-        # 3, 4 & 5. Create School Administrator account bound exclusively to new_school_id
         admin_user_id = db.execute(
             text("""
                 INSERT INTO users (
@@ -283,7 +345,7 @@ def approve_school_registration(
             },
         ).scalar()
 
-        # 6 & 7. Initialize empty tenant environment & default school configuration (0 students/grades/classes)
+        # Espace scolaire totalement vide : 0 élève, 0 note, 0 paiement, 0 classe
         db.execute(
             text("""
                 INSERT INTO school_settings (school_id, academic_year, grading_scale, currency, timezone, onboarding_completed)
@@ -292,7 +354,6 @@ def approve_school_registration(
             {"sid": new_school_id},
         )
 
-        # Store one-time activation token hash
         db.execute(
             text("""
                 INSERT INTO account_activation_tokens (user_id, token_hash, expires_at)
@@ -301,7 +362,6 @@ def approve_school_registration(
             {"uid": admin_user_id, "thash": token_hash, "exp": expires_at},
         )
 
-        # Mark registration request APPROVED
         db.execute(
             text("""
                 UPDATE school_registration_requests
@@ -330,9 +390,11 @@ def approve_school_registration(
             detail="Erreur interne lors de l'initialisation transactionnelle de l'établissement.",
         ) from exc
 
-    # 8. Send real confirmation email with credentials + one-time activation link AFTER commit
+    email_sent = True
+    email_message_id = None
+    email_warning = None
     try:
-        msg_id = send_school_admin_credentials_email(
+        email_message_id = send_school_admin_credentials_email(
             db,
             request_id=request_id,
             school_name=reg["school_name"],
@@ -344,19 +406,18 @@ def approve_school_registration(
             activation_token=raw_token,
         )
     except EmailDeliveryError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Établissement créé (ID={new_school_id}), mais l'envoi des identifiants par email a échoué : {exc}",
-        )
+        email_sent = False
+        email_warning = str(exc)
 
-    # Never return temp_password or raw_token in API response or logs
     return {
-        "message": f"Établissement '{reg['school_name']}' créé et activé avec succès.",
+        "message": f"Établissement '{reg['school_name']}' créé et provisionné avec succès.",
         "school_id": new_school_id,
         "tenant_uuid": tenant_uuid,
         "admin_user_id": admin_user_id,
         "admin_username": reg["requested_username"],
-        "email_message_id": msg_id,
+        "email_sent": email_sent,
+        "email_message_id": email_message_id,
+        "email_warning": email_warning,
     }
 
 
@@ -364,7 +425,7 @@ def approve_school_registration(
 def reject_school_registration(
     request_id: int,
     payload: RejectRequestIn,
-    current_user: dict = Depends(require_roles(["super_admin"])),
+    current_user: dict = Depends(require_super_admin),
     db: Session = Depends(get_db),
 ):
     updated = db.execute(
@@ -432,6 +493,7 @@ def activate_account_with_token(payload: ActivateAccountIn, db: Session = Depend
             "role": tok["role"],
             "school_name": tok["school_name"],
             "school_city": tok["school_city"],
+            "must_change_password": False,
         },
     }
 

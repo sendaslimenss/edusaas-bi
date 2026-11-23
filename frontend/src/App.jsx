@@ -14,6 +14,11 @@ function extractActivationTokenFromUrl() {
   return token ? token.trim() : "";
 }
 
+function extractReviewRequestFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const reqId = params.get("super_admin_review") || params.get("review_request");
+  return reqId ? reqId.trim() : "";
+}
 function clearActivationTokenFromUrl() {
   const url = new URL(window.location.href);
   if (url.searchParams.has("activate_token")) {
@@ -26,7 +31,7 @@ function clearActivationTokenFromUrl() {
 
 export default function App() {
   const [activationToken, setActivationToken] = useState(() => extractActivationTokenFromUrl());
-
+  const [reviewRequestUuid] = useState(() => extractReviewRequestFromUrl());
   const [user, setUser] = useState(() => {
     // Si un lien d'activation est ouvert, on force l'écran d'activation plutôt qu'une ancienne session
     if (extractActivationTokenFromUrl()) return null;
@@ -35,6 +40,7 @@ export default function App() {
   });
 
   const getDefaultTab = (role) => {
+    if (role === "super_admin") return { mode: "saas", key: "super_admin_registrations" };
     if (role === "director" || role === "admin") return { mode: "bi", key: "general" };
     if (role === "accountant") return { mode: "bi", key: "financial" };
     if (role === "teacher") return { mode: "saas", key: "teacher" };
@@ -77,12 +83,16 @@ export default function App() {
     setMobileOpen(false);
   };
 
-  if (!user || activationToken) {
+ const mustChangePwd = Boolean(user?.must_change_password);
+
+ if (!user || activationToken || mustChangePwd) {
     return (
       <Login
         onLoginSuccess={handleLogin}
         activationToken={activationToken}
         onCancelActivation={handleCancelActivation}
+        forcePasswordChangeUser={mustChangePwd ? user : null}
+        onLogoutForceChange={handleLogout}
       />
     );
   }
@@ -101,6 +111,8 @@ export default function App() {
   ].filter((item) => item.roles.includes(user.role));
   
   const saasMenu = [
+    { key: "super_admin_registrations", label: "Demandes d'Écoles", icon: Building2, roles: ["super_admin"] },
+    { key: "super_admin_tenants", label: "Établissements (Tenants)", icon: Layers, roles: ["super_admin"] },
     {
       key: "students",
       label: user.role === "student" || user.role === "parent" ? "Mon Bulletin & Suivi" : "Élèves & Bulletins",
@@ -234,7 +246,9 @@ export default function App() {
                 <div className="text-[10px] uppercase tracking-wider text-amber-300/90 font-semibold">
                   Établissement actif
                 </div>
-                <div className="text-xs font-bold text-white truncate">{user.school_name}</div>
+                <div className="text-xs font-bold text-white truncate">
+                  {user.school_name || "Gouvernance Centrale ACEDA"}
+                </div>
               </div>
             )}
           </div>
@@ -387,7 +401,9 @@ export default function App() {
           <div className="flex items-center gap-2.5 px-4 py-2 rounded-xl bg-[#041E42]/5 border border-[#041E42]/15 text-xs text-[#041E42]">
             <Building2 size={16} className="text-amber-600 shrink-0" />
             <span>
-              Établissement : <strong>{user.school_name}</strong> ({user.school_city})
+              {user.role === "super_admin"
+               ? <>Portail : <strong>Super Administrateur Multi-Tenant</strong></>
+                : <>Établissement : <strong>{user.school_name}</strong> ({user.school_city})</>}
             </span>
           </div>
         </header>
@@ -397,8 +413,9 @@ export default function App() {
           {nav.mode === "bi" ? (
             <BiDashboards activeTab={nav.key} />
           ) : (
-            <SaasWorkspace section={nav.key} user={user} />
-          )}
+            <SaasWorkspace section={nav.key} user={user} highlightRequestUuid={reviewRequestUuid} />
+           )}
+      
         </div>
       </main>
     </div>

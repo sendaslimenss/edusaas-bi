@@ -2,16 +2,16 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import check_db_connection
-from app.routers import saas, bi
 from app.routers import saas, bi, onboarding
-app = FastAPI(title="ACEDA – SaaS & BI")
 
+app = FastAPI(title="ACEDA – SaaS & BI Multi-Tenant")
 
 allowed_origins = [
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
     "https://edusaas-bi.vercel.app",
 ]
-extra_origin = os.getenv("FRONTEND_URL", "").strip()
+extra_origin = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
 if extra_origin and extra_origin not in allowed_origins:
     allowed_origins.append(extra_origin)
 
