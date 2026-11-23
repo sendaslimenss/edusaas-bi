@@ -1,7 +1,7 @@
 import math
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.model_selection import StratifiedKFold, cross_val_score
@@ -15,6 +15,14 @@ router = APIRouter(prefix="/api/bi", tags=["Business Intelligence"])
 EXEC_ROLES = ["director", "admin"]
 FINANCE_BI_ROLES = ["director", "admin", "accountant"]
 
+def _require_school_id(current_user: dict) -> int:
+    sid = current_user.get("school_id")
+    if sid is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Un contexte établissement (school_id) est requis pour consulter les tableaux de bord BI.",
+        )
+    return int(sid)
 
 def _safe_float(val, digits: int = 2) -> float:
     if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
@@ -1201,16 +1209,21 @@ def get_strategic_dashboard(
         _, feature_importances, ml_algo = _train_dropout_model(df_perf)
 
         active_perf = df_perf[df_perf["student_status"] == "active"]
-        current_pass_rate = _safe_float((active_perf["avg_all"] >= 10.0).mean() * 100, 1) if not active_perf.empty else 75.0
+        current_pass_rate = _safe_float((active_perf["avg_all"] >= 10.0).mean() * 100, 1) if not active_perf.empty else 0.0
     else:
         feature_importances = []
         ml_algo = "RandomForestClassifier"
-        current_pass_rate = 75.0
+        current_pass_rate = 0.0
 
-    est_students_2024 = max(1, int(round(active_students * 0.93)))
-    reg_stu = LinearRegression().fit(np.array([[2024], [2025]]), np.array([est_students_2024, active_students]))
-    proj_students_2026 = int(round(reg_stu.predict(np.array([[2026]]))[0]))
-    proj_pass_rate_2026 = min(98.5, _safe_float(current_pass_rate + 2.4, 1))
+    if active_students == 0:
+        est_students_2024 = 0
+        proj_students_2026 = 0
+        proj_pass_rate_2026 = 0.0
+    else:
+        est_students_2024 = max(1, int(round(active_students * 0.93)))
+        reg_stu = LinearRegression().fit(np.array([[2024], [2025]]), np.array([est_students_2024, active_students]))
+        proj_students_2026 = max(active_students, int(round(reg_stu.predict(np.array([[2026]]))[0])))
+        proj_pass_rate_2026 = min(98.5, _safe_float(current_pass_rate + 2.4, 1))
 
     recommendations = []
     occ_rate = (active_students / max(1, total_capacity)) * 100
@@ -1245,8 +1258,7 @@ def get_strategic_dashboard(
         "impact": "0 heure supplémentaire payée",
     })
 
-    avg_tuition_per_student = _safe_float(exp_2025 / max(1, active_students), 2)
-
+    avg_tuition_per_student = _safe_float(exp_2025 / active_students, 2) if (active_students > 0 and exp_2025 > 0) else 880.0 
     return {
         "ml_engine": ml_algo,
         "kpis": {
