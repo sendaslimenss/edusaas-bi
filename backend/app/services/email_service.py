@@ -1,28 +1,34 @@
+import base64
 import html
 import logging
 import os
-import smtplib
-import ssl
 import time
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 from urllib.parse import quote
 
+import httpx
 from email_validator import EmailNotValidError, validate_email
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("aceda.email")
 
-DEFAULT_FRONTEND_URL = DEFAULT_FRONTEND_URL = "https://edusaas-bi.vercel.app"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+
+DEFAULT_FRONTEND_URL = "https://edusaas-bi.vercel.app"
 DEFAULT_SUPER_ADMIN_EMAIL = "sendaslimenss@gmail.com"
-DEFAULT_SMTP_HOST = "smtp.gmail.com"
-DEFAULT_SMTP_PORT = 587
 DEFAULT_MAIL_FROM_NAME = "ACEDA Enterprise"
+
+_TOKEN_CACHE: dict[str, object] = {
+    "access_token": "",
+    "expires_at": 0.0,
+}
 
 
 class EmailDeliveryError(Exception):
-    """Raised when transactional email delivery via Gmail SMTP fails."""
+    """Raised when transactional email delivery via Gmail API fails."""
 
 
 def _esc(value: object) -> str:
@@ -30,7 +36,8 @@ def _esc(value: object) -> str:
 
 
 def _get_frontend_url() -> str:
-    return os.getenv("FRONTEND_URL", DEFAULT_FRONTEND_URL).strip().rstrip("/") or DEFAULT_FRONTEND_URL
+    raw = os.getenv("FRONTEND_URL", DEFAULT_FRONTEND_URL).strip().rstrip("/")
+    return raw or DEFAULT_FRONTEND_URL
 
 
 def _sanitize_header_value(value: str) -> str:
@@ -48,43 +55,73 @@ def _validate_recipient(recipient: str) -> str:
         raise EmailDeliveryError(f"Adresse email destinataire invalide : {exc}") from exc
 
 
-def _get_smtp_config() -> dict:
-    host = os.getenv("SMTP_HOST", DEFAULT_SMTP_HOST).strip() or DEFAULT_SMTP_HOST
-    port_raw = os.getenv("SMTP_PORT", str(DEFAULT_SMTP_PORT)).strip() or str(DEFAULT_SMTP_PORT)
-    try:
-        port = int(port_raw)
-    except ValueError as exc:
-        raise EmailDeliveryError("Configuration SMTP_PORT invalide.") from exc
-
-    encryption = os.getenv("SMTP_ENCRYPTION", "TLS").strip().upper() or "TLS"
-    username = os.getenv("SMTP_USERNAME", DEFAULT_SUPER_ADMIN_EMAIL).strip()
-    # Google displays App Passwords in 4-char blocks separated by spaces; strip spaces safely.
-    app_password = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
-    from_address = os.getenv("MAIL_FROM_ADDRESS", username).strip()
+def _get_gmail_api_config() -> dict:
+    client_id = os.getenv("GMAIL_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GMAIL_CLIENT_SECRET", "").strip()
+    refresh_token = os.getenv("GMAIL_REFRESH_TOKEN", "").strip()
+    from_address = os.getenv("MAIL_FROM_ADDRESS", DEFAULT_SUPER_ADMIN_EMAIL).strip()
     from_name = _sanitize_header_value(os.getenv("MAIL_FROM_NAME", DEFAULT_MAIL_FROM_NAME))
 
-    if not username or not app_password or not from_address:
+    if not client_id or not client_secret or not refresh_token or not from_address:
         raise EmailDeliveryError(
-            "Configuration Gmail SMTP incomplète : SMTP_USERNAME, GMAIL_APP_PASSWORD ou MAIL_FROM_ADDRESS manquant."
+            "Configuration Gmail API incomplète : GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, "
+            "GMAIL_REFRESH_TOKEN ou MAIL_FROM_ADDRESS manquant."
         )
-    if encryption not in ("TLS", "STARTTLS"):
-        raise EmailDeliveryError("SMTP_ENCRYPTION doit être configuré sur TLS.")
 
     return {
-        "host": host,
-        "port": port,
-        "username": username,
-        "password": app_password,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
         "from_address": from_address,
         "from_name": from_name,
     }
 
 
-def _sanitize_error_message(raw_error: str, secret: str = "") -> str:
-    msg = str(raw_error or "Erreur SMTP inconnue")
-    if secret:
-        msg = msg.replace(secret, "***")
+def _sanitize_error_message(raw_error: str, secrets_to_mask: list[str]) -> str:
+    msg = str(raw_error or "Erreur Gmail API inconnue")
+    for secret in secrets_to_mask:
+        if secret:
+            msg = msg.replace(secret, "***")
     return msg[:500]
+
+
+def _get_gmail_access_token(cfg: dict, force_refresh: bool = False) -> str:
+    now = time.monotonic()
+    cached_token = str(_TOKEN_CACHE.get("access_token") or "")
+    expires_at = float(_TOKEN_CACHE.get("expires_at") or 0.0)
+    if not force_refresh and cached_token and now < expires_at:
+        return cached_token
+
+    secrets_to_mask = [cfg["client_secret"], cfg["refresh_token"]]
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "client_id": cfg["client_id"],
+                    "client_secret": cfg["client_secret"],
+                    "refresh_token": cfg["refresh_token"],
+                    "grant_type": "refresh_token",
+                },
+            )
+            data = resp.json() if resp.content else {}
+    except Exception as exc:
+        raise EmailDeliveryError(
+            _sanitize_error_message(f"Erreur réseau OAuth2 Google : {exc}", secrets_to_mask)
+        ) from exc
+
+    if resp.status_code != 200 or not data.get("access_token"):
+        err_code = data.get("error", f"HTTP {resp.status_code}")
+        err_desc = data.get("error_description", "Impossible d'obtenir un access_token Gmail.")
+        raise EmailDeliveryError(
+            _sanitize_error_message(f"Échec authentification Gmail OAuth2 ({err_code}) : {err_desc}", secrets_to_mask)
+        )
+
+    access_token = str(data["access_token"])
+    expires_in = int(data.get("expires_in", 3599))
+    _TOKEN_CACHE["access_token"] = access_token
+    _TOKEN_CACHE["expires_at"] = now + max(60, expires_in - 60)
+    return access_token
 
 
 def _has_already_sent(db: Session, email_type: str, recipient: str, related_request_id: int | None) -> str | None:
@@ -127,7 +164,7 @@ def _log_email(
                 INSERT INTO email_delivery_logs
                     (recipient_email, email_type, subject, provider, provider_message_id, status, error_message, related_request_id)
                 VALUES
-                    (:rec, :etype, :subj, 'gmail_smtp', :mid, :st, :err, :req_id)
+                    (:rec, :etype, :subj, 'gmail_api', :mid, :st, :err, :req_id)
             """),
             {
                 "rec": recipient,
@@ -145,7 +182,7 @@ def _log_email(
         logger.error("Impossible d'enregistrer le log email en base : %s", log_exc)
 
 
-def _send_via_gmail_smtp(
+def _send_via_gmail_api(
     db: Session,
     *,
     to_email: str,
@@ -177,67 +214,76 @@ def _send_via_gmail_smtp(
             return existing_mid
 
     try:
-        cfg = _get_smtp_config()
+        cfg = _get_gmail_api_config()
     except EmailDeliveryError as exc:
         logger.warning("[EMAIL %s -> %s] %s", email_type, normalized_recipient, exc)
         _log_email(db, normalized_recipient, email_type, clean_subject, "FAILED", None, str(exc), related_request_id)
         raise
 
-    message_id = make_msgid(domain="gmail.com")
     msg = EmailMessage()
     msg["Subject"] = clean_subject
     msg["From"] = formataddr((cfg["from_name"], cfg["from_address"]))
     msg["To"] = normalized_recipient
     msg["Reply-To"] = cfg["from_address"]
-    msg["Message-ID"] = message_id
+    msg["Message-ID"] = make_msgid(domain="gmail.com")
     msg.set_content(text_body)
     msg.add_alternative(html_body, subtype="html")
 
-    tls_context = ssl.create_default_context()
-    last_error = "Erreur SMTP inconnue"
+    raw_b64 = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    secrets_to_mask = [cfg["client_secret"], cfg["refresh_token"]]
+    last_error = "Erreur inconnue Gmail API"
 
     for attempt in range(1, max_retries + 1):
         try:
-            with smtplib.SMTP(cfg["host"], cfg["port"], timeout=20) as server:
-                server.ehlo()
-                server.starttls(context=tls_context)
-                server.ehlo()
-                server.login(cfg["username"], cfg["password"])
-                refused = server.send_message(msg)
-                if refused:
-                    raise EmailDeliveryError(f"Destinataire refusé par le serveur SMTP : {list(refused.keys())}")
+            access_token = _get_gmail_access_token(cfg, force_refresh=(attempt > 1))
+            secrets_to_mask = [cfg["client_secret"], cfg["refresh_token"], access_token]
 
-            logger.info(
-                "[EMAIL SENT] provider=gmail_smtp type=%s to=%s id=%s attempt=%d",
-                email_type,
-                normalized_recipient,
-                message_id,
-                attempt,
-            )
-            _log_email(db, normalized_recipient, email_type, clean_subject, "SENT", message_id, None, related_request_id)
-            return message_id
+            with httpx.Client(timeout=20.0) as client:
+                resp = client.post(
+                    GMAIL_SEND_URL,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"raw": raw_b64},
+                )
+                data = resp.json() if resp.content else {}
 
-        except smtplib.SMTPAuthenticationError:
-            last_error = (
-                "Échec d'authentification Gmail SMTP (535). "
-                "Vérifiez SMTP_USERNAME et GMAIL_APP_PASSWORD (mot de passe d'application Google à 16 caractères)."
+            if resp.status_code in (200, 201) and data.get("id"):
+                gmail_msg_id = str(data["id"])
+                logger.info(
+                    "[EMAIL SENT] provider=gmail_api type=%s to=%s id=%s attempt=%d",
+                    email_type,
+                    normalized_recipient,
+                    gmail_msg_id,
+                    attempt,
+                )
+                _log_email(db, normalized_recipient, email_type, clean_subject, "SENT", gmail_msg_id, None, related_request_id)
+                return gmail_msg_id
+
+            api_err = (data.get("error") or {}).get("message") if isinstance(data.get("error"), dict) else None
+            last_error = _sanitize_error_message(
+                f"Gmail API HTTP {resp.status_code} : {api_err or 'Réponse invalide'}",
+                secrets_to_mask,
             )
-            break
-        except smtplib.SMTPRecipientsRefused as exc:
-            last_error = _sanitize_error_message(f"Adresse destinataire refusée par Gmail : {exc}", cfg["password"])
-            break
-        except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, TimeoutError, OSError) as exc:
-            last_error = _sanitize_error_message(f"Erreur de connexion Gmail SMTP : {exc}", cfg["password"])
+
+            # Force token refresh once on 401; abort immediately on 400/403 client errors
+            if resp.status_code == 401 and attempt == 1:
+                _TOKEN_CACHE["access_token"] = ""
+                continue
+            if resp.status_code in (400, 403):
+                break
+
         except EmailDeliveryError as exc:
-            last_error = _sanitize_error_message(str(exc), cfg["password"])
+            last_error = _sanitize_error_message(str(exc), secrets_to_mask)
             break
         except Exception as exc:
-            last_error = _sanitize_error_message(f"Erreur inattendue Gmail SMTP : {exc}", cfg["password"])
+            last_error = _sanitize_error_message(f"Erreur réseau Gmail API : {exc}", secrets_to_mask)
 
         if attempt < max_retries:
             time.sleep(0.5 * (2 ** (attempt - 1)))
 
-    logger.error("[EMAIL FAILED] provider=gmail_smtp type=%s to=%s error=%s", email_type, normalized_recipient, last_error)
+    logger.error("[EMAIL FAILED] provider=gmail_api type=%s to=%s error=%s", email_type, normalized_recipient, last_error)
     _log_email(db, normalized_recipient, email_type, clean_subject, "FAILED", None, last_error, related_request_id)
     raise EmailDeliveryError(last_error)
 
@@ -292,7 +338,7 @@ def send_super_admin_registration_alert(db: Session, registration: dict) -> str:
     </div>
     """
 
-    return _send_via_gmail_smtp(
+    return _send_via_gmail_api(
         db,
         to_email=super_admin_email,
         subject=subject,
@@ -363,7 +409,7 @@ def send_school_admin_credentials_email(
     </div>
     """
 
-    return _send_via_gmail_smtp(
+    return _send_via_gmail_api(
         db,
         to_email=admin_email,
         subject=subject,
