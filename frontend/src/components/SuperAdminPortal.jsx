@@ -1,8 +1,7 @@
-@'
 import { useEffect, useState } from "react";
 import {
   Building2, CheckCircle, AlertCircle, Clock, Users, Layers,
-  Search, Send, FileText, X, Sparkles, MapPin
+  Search, Send, FileText, X, MapPin
 } from "lucide-react";
 import api from "../api";
 
@@ -16,11 +15,9 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState(null);
 
-  // Modale de rejet
   const [rejectTarget, setRejectTarget] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
 
-  // Bandeaux de notification
   const [feedback, setFeedback] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -119,7 +116,6 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
 
   return (
     <div className="space-y-6">
-      {/* Bandeaux de retour */}
       {feedback && (
         <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-sm font-medium flex items-start gap-2.5">
           <CheckCircle size={18} className="text-emerald-600 shrink-0 mt-0.5" />
@@ -133,7 +129,6 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
         </div>
       )}
 
-      {/* Cartes KPI Plateforme */}
       {stats && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
@@ -174,7 +169,6 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
         </div>
       )}
 
-      {/* ONGLET 1 : DEMANDES D'INSCRIPTION D'ÉCOLES */}
       {section === "super_admin_registrations" && (
         <div className="space-y-6">
           <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
@@ -326,7 +320,6 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
             )}
           </div>
 
-          {/* Journal d'audit des emails Resend */}
           <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
             <div className="flex items-center gap-2">
               <FileText size={18} className="text-[#041E42]" />
@@ -376,19 +369,16 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
         </div>
       )}
 
-      {/* ONGLET 2 : ANNUAIRE DES ÉTABLISSEMENTS (TENANTS) */}
       {section === "super_admin_tenants" && (
         <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-lg font-extrabold text-[#041E42] flex items-center gap-2">
-                <Layers size={20} className="text-amber-500" />
-                <span>Établissements Provisionnés (Multi-Tenant)</span>
-              </h3>
-              <p className="text-xs text-slate-500">
-                Chaque établissement dispose d'une isolation stricte par school_id et tenant_uuid.
-              </p>
-            </div>
+          <div>
+            <h3 className="text-lg font-extrabold text-[#041E42] flex items-center gap-2">
+              <Layers size={20} className="text-amber-500" />
+              <span>Établissements Provisionnés (Multi-Tenant)</span>
+            </h3>
+            <p className="text-xs text-slate-500">
+              Chaque établissement dispose d'une isolation stricte par school_id et tenant_uuid.
+            </p>
           </div>
 
           <div className="relative">
@@ -452,7 +442,6 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
         </div>
       )}
 
-      {/* Modale de rejet d'une demande */}
       {rejectTarget && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm grid place-items-center p-4">
           <form
@@ -504,4 +493,3 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
     </div>
   );
 }
-'@ | Set-Content -Path frontend/src/components/SuperAdminPortal.jsx -Encoding UTF8

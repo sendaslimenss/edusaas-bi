@@ -5,6 +5,7 @@ import {
   UserCog, UserPlus, Edit3
 } from "lucide-react";
 import api from "../api";
+import SuperAdminPortal from "./SuperAdminPortal";
 
 const DAYS_OF_WEEK = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
 const ROLE_LABELS = {
@@ -16,7 +17,16 @@ const ROLE_LABELS = {
   student: "Élève",
 };
 
-export default function SaasWorkspace({ section, user }) {
+export default function SaasWorkspace({ section, user, highlightRequestUuid}) {
+  if (section === "super_admin_registrations" || section === "super_admin_tenants") {
+    return (
+      <SuperAdminPortal
+        section={section}
+        user={user}
+        highlightRequestUuid={highlightRequestUuid}
+      />
+    );
+  }
   const [students, setStudents] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
