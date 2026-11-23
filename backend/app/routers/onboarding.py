@@ -275,10 +275,12 @@ def list_email_logs(
 
 @router.post("/api/super-admin/registrations/{request_id}/approve")
 def approve_school_registration(
+    
     request_id: int,
     current_user: dict = Depends(require_super_admin),
     db: Session = Depends(get_db),
 ):
+    
     temp_password = generate_secure_temp_password(16)
     temp_password_hash = hash_password(temp_password)
     raw_token, token_hash = generate_one_time_token()
@@ -402,7 +404,6 @@ def approve_school_registration(
             admin_name=reg["admin_full_name"],
             admin_email=reg["admin_email"],
             username=reg["requested_username"],
-            temporary_password=temp_password,
             activation_token=raw_token,
         )
     except EmailDeliveryError as exc:
@@ -419,7 +420,17 @@ def approve_school_registration(
         "email_message_id": email_message_id,
         "email_warning": email_warning,
     }
-
+class DirectSchoolCreateIn(BaseModel):
+    school_name: str = Field(..., min_length=3, max_length=200)
+    school_email: EmailStr
+    school_phone: str = Field(default="+21600000000", min_length=7, max_length=50)
+    country: str = Field(default="Tunisie", min_length=2, max_length=100)
+    city: str = Field(..., min_length=2, max_length=100)
+    address: str = Field(default="Adresse non renseignée", min_length=3, max_length=500)
+    admin_full_name: str = Field(..., min_length=3, max_length=200)
+    admin_email: EmailStr
+    admin_phone: str = Field(default="+21600000000", min_length=7, max_length=50)
+    requested_username: str | None = Field(default=None, min_length=4, max_length=40)
 
 @router.post("/api/super-admin/registrations/{request_id}/reject")
 def reject_school_registration(
@@ -522,3 +533,222 @@ def change_initial_password(
     )
     db.commit()
     return {"message": "Mot de passe mis à jour avec succès.", "must_change_password": False}
+@router.post("/api/super-admin/schools", status_code=status.HTTP_201_CREATED)
+def create_school_directly_by_super_admin(
+    payload: DirectSchoolCreateIn,
+    current_user: dict = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    school_name = payload.school_name.strip()
+    school_email = payload.school_email.strip().lower()
+    admin_email = payload.admin_email.strip().lower()
+    username = (
+        payload.requested_username.strip().lower()
+        if payload.requested_username
+        else re.sub(r"[^a-z0-9._-]", "_", admin_email.split("@")[0])[:32]
+    )
+    if len(username) < 4:
+        username = f"admin_{username}"
+
+    existing_school = db.execute(
+        text("SELECT id FROM schools WHERE LOWER(TRIM(name)) = :n OR LOWER(TRIM(COALESCE(email, ''))) = :e"),
+        {"n": school_name.lower(), "e": school_email},
+    ).first()
+    if existing_school:
+        raise HTTPException(status_code=409, detail="Un établissement avec ce nom ou cet email existe déjà.")
+
+    existing_user = db.execute(
+        text("SELECT id FROM users WHERE LOWER(TRIM(COALESCE(username, ''))) = :u OR LOWER(TRIM(email)) = :ae"),
+        {"u": username, "ae": admin_email},
+    ).first()
+    if existing_user:
+        raise HTTPException(status_code=409, detail="Cet email ou nom d'utilisateur administrateur existe déjà.")
+
+    temp_password_hash = hash_password(generate_secure_temp_password(16))
+    raw_token, token_hash = generate_one_time_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+
+    try:
+        school_row = db.execute(
+            text("""
+                INSERT INTO schools (name, email, phone, country, city, address, total_capacity, status)
+                VALUES (:name, :email, :phone, :country, :city, :addr, 300, 'active')
+                RETURNING id, CAST(tenant_uuid AS TEXT) AS tenant_uuid, name
+            """),
+            {
+                "name": school_name,
+                "email": school_email,
+                "phone": payload.school_phone.strip(),
+                "country": payload.country.strip(),
+                "city": payload.city.strip(),
+                "addr": payload.address.strip(),
+            },
+        ).mappings().first()
+        new_school_id = int(school_row["id"])
+        tenant_uuid = school_row["tenant_uuid"]
+
+        admin_user_id = db.execute(
+            text("""
+                INSERT INTO users (
+                    school_id, full_name, email, username, phone,
+                    password_hash, role, must_change_password, is_active
+                )
+                VALUES (
+                    :sid, :fname, :email, :uname, :phone,
+                    :phash, 'admin', TRUE, TRUE
+                )
+                RETURNING id
+            """),
+            {
+                "sid": new_school_id,
+                "fname": payload.admin_full_name.strip(),
+                "email": admin_email,
+                "uname": username,
+                "phone": payload.admin_phone.strip(),
+                "phash": temp_password_hash,
+            },
+        ).scalar()
+
+        db.execute(
+            text("""
+                INSERT INTO school_settings (school_id, academic_year, grading_scale, currency, timezone, onboarding_completed)
+                VALUES (:sid, '2025-2026', 20.00, 'TND', 'Africa/Tunis', FALSE)
+            """),
+            {"sid": new_school_id},
+        )
+
+        db.execute(
+            text("""
+                INSERT INTO account_activation_tokens (user_id, token_hash, expires_at)
+                VALUES (:uid, :thash, :exp)
+            """),
+            {"uid": admin_user_id, "thash": token_hash, "exp": expires_at},
+        )
+
+        reg_id = db.execute(
+            text("""
+                INSERT INTO school_registration_requests (
+                    school_name, school_email, school_phone, country, city, address,
+                    admin_full_name, admin_email, admin_phone, requested_username,
+                    status, approved_school_id, reviewed_by, reviewed_at
+                )
+                VALUES (
+                    :sname, :semail, :sphone, :country, :city, :addr,
+                    :aname, :aemail, :aphone, :uname,
+                    'APPROVED', :sid, :reviewer, NOW()
+                )
+                RETURNING id
+            """),
+            {
+                "sname": school_name,
+                "semail": school_email,
+                "sphone": payload.school_phone.strip(),
+                "country": payload.country.strip(),
+                "city": payload.city.strip(),
+                "addr": payload.address.strip(),
+                "aname": payload.admin_full_name.strip(),
+                "aemail": admin_email,
+                "aphone": payload.admin_phone.strip(),
+                "uname": username,
+                "sid": new_school_id,
+                "reviewer": current_user["id"],
+            },
+        ).scalar()
+
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Conflit d'unicité lors de la création de l'établissement.") from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Erreur lors de la création transactionnelle de l'établissement.") from exc
+
+    email_sent = True
+    email_message_id = None
+    email_warning = None
+    try:
+        email_message_id = send_school_admin_credentials_email(
+            db,
+            request_id=int(reg_id),
+            school_name=school_name,
+            tenant_uuid=tenant_uuid,
+            admin_name=payload.admin_full_name.strip(),
+            admin_email=admin_email,
+            username=username,
+            activation_token=raw_token,
+        )
+    except EmailDeliveryError as exc:
+        email_sent = False
+        email_warning = str(exc)
+
+    return {
+        "message": f"Établissement '{school_name}' créé avec succès.",
+        "request_id": int(reg_id),
+        "school_id": new_school_id,
+        "tenant_uuid": tenant_uuid,
+        "admin_user_id": admin_user_id,
+        "admin_email": admin_email,
+        "admin_username": username,
+        "email_sent": email_sent,
+        "email_message_id": email_message_id,
+        "email_warning": email_warning,
+    }
+
+
+@router.post("/api/super-admin/registrations/{request_id}/resend-welcome-email")
+def resend_school_admin_welcome_email(
+    request_id: int,
+    current_user: dict = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    row = db.execute(
+        text("""
+            SELECT r.id, r.school_name, r.admin_full_name, r.admin_email, r.requested_username,
+                   r.status, r.approved_school_id,
+                   CAST(s.tenant_uuid AS TEXT) AS tenant_uuid,
+                   u.id AS admin_user_id
+            FROM school_registration_requests r
+            JOIN schools s ON r.approved_school_id = s.id
+            JOIN users u ON u.school_id = s.id AND u.role = 'admin'
+            WHERE r.id = :rid
+            ORDER BY u.id ASC
+            LIMIT 1
+        """),
+        {"rid": request_id},
+    ).mappings().first()
+
+    if not row or row["status"] != "APPROVED":
+        raise HTTPException(status_code=404, detail="Demande approuvée introuvable.")
+
+    raw_token, token_hash = generate_one_time_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+
+    db.execute(
+        text("""
+            INSERT INTO account_activation_tokens (user_id, token_hash, expires_at)
+            VALUES (:uid, :thash, :exp)
+        """),
+        {"uid": row["admin_user_id"], "thash": token_hash, "exp": expires_at},
+    )
+    db.commit()
+
+    try:
+        msg_id = send_school_admin_credentials_email(
+            db,
+            request_id=request_id,
+            school_name=row["school_name"],
+            tenant_uuid=row["tenant_uuid"],
+            admin_name=row["admin_full_name"],
+            admin_email=row["admin_email"],
+            username=row["requested_username"],
+            activation_token=raw_token,
+            allow_resend_duplicate=True,
+        )
+    except EmailDeliveryError as exc:
+        raise HTTPException(status_code=502, detail=f"Échec de renvoi Gmail SMTP : {exc}") from exc
+
+    return {
+        "message": f"Email d'activation renvoyé à {row['admin_email']}.",
+        "email_sent": True,
+        "email_message_id": msg_id,
+    }
