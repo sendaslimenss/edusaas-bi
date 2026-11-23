@@ -91,6 +91,21 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
     }
   };
 
+const handleResendEmail = async (reg) => {
+    setFeedback("");
+    setErrorMsg("");
+    setActionId(reg.id);
+    try {
+      const res = await api.post(`/api/super-admin/registrations/${reg.id}/resend-welcome-email`);
+      setFeedback(res.data?.message || `Email d'activation renvoyé à ${reg.admin_email}.`);
+      await loadAllData();
+    } catch (err) {
+      setErrorMsg(err?.response?.data?.detail || "Erreur lors du renvoi de l'email d'activation.");
+    } finally {
+      setActionId(null);
+    }
+  };
+
   const filteredRegistrations = registrations.filter((r) => {
     const matchesStatus = statusFilter === "ALL" || r.status === statusFilter;
     const q = searchQuery.trim().toLowerCase();
@@ -307,6 +322,17 @@ export default function SuperAdminPortal({ section, highlightRequestUuid }) {
                                   Rejeter
                                 </button>
                               </div>
+                          ) : reg.status === "APPROVED" ? (
+                              <button
+                                type="button"
+                                disabled={actionId === reg.id}
+                                onClick={() => handleResendEmail(reg)}
+                                title="Générer un nouveau lien d'activation 24h et renvoyer l'email"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-100 hover:bg-sky-200 text-sky-900 font-bold transition cursor-pointer disabled:opacity-50"
+                              >
+                                <Send size={13} />
+                                <span>{actionId === reg.id ? "Envoi..." : "Renvoyer"}</span>
+                              </button>
                             ) : (
                               <span className="text-slate-400">Traitée</span>
                             )}
