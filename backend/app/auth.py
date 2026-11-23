@@ -29,7 +29,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(6
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 security = HTTPBearer()
 
-# Protection anti-brute-force en mémoire (fenêtre glissante de 5 minutes)
 _LOGIN_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 300
@@ -62,18 +61,30 @@ def hash_password(plain_password: str) -> str:
     return pwd_context.hash(plain_password)
 
 
-def generate_activation_token() -> tuple[str, str]:
-    """Génère un jeton brut (envoyé par email) et son empreinte SHA-256 (stockée en base)."""
-    raw_token = secrets.token_urlsafe(32)
-    token_hash = hash_token(raw_token)
-    return raw_token, token_hash
-
-def generate_one_time_token() -> tuple[str, str]:
-    """Génère un jeton à usage unique (brut + empreinte SHA-256)."""
-    return generate_activation_token()
-
 def hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def generate_activation_token() -> tuple[str, str]:
+    raw_token = secrets.token_urlsafe(32)
+    return raw_token, hash_token(raw_token)
+
+
+def generate_one_time_token() -> tuple[str, str]:
+    return generate_activation_token()
+
+
+def generate_secure_temp_password(length: int = 16) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%"
+    while True:
+        pwd = "".join(secrets.choice(alphabet) for _ in range(length))
+        if (
+            any(c.islower() for c in pwd)
+            and any(c.isupper() for c in pwd)
+            and any(c.isdigit() for c in pwd)
+            and any(not c.isalnum() for c in pwd)
+        ):
+            return pwd
 
 
 def create_access_token(data: dict) -> str:
@@ -104,10 +115,14 @@ def get_current_user(
                    u.school_id,
                    u.full_name,
                    u.email,
+                   u.username,
                    u.role,
+                   COALESCE(u.is_active, TRUE) AS is_active,
                    COALESCE(u.must_change_password, FALSE) AS must_change_password,
                    s.name AS school_name,
-                   s.city AS school_city
+                   s.city AS school_city,
+                   CAST(s.tenant_uuid AS TEXT) AS tenant_uuid,
+                   COALESCE(s.status, 'active') AS school_status
             FROM users u
             LEFT JOIN schools s ON u.school_id = s.id
             WHERE u.id = :uid
@@ -115,22 +130,23 @@ def get_current_user(
         {"uid": int(user_id)},
     ).mappings().first()
 
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilisateur introuvable")
+    if not user or not user["is_active"]:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilisateur introuvable ou désactivé")
 
     db_school_id = user["school_id"]
     if db_school_id is None:
-        # Compte super_admin (aucun établissement rattaché)
-        if token_school_id is not None:
+        if token_school_id is not None or user["role"] != "super_admin":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Contexte Super Admin invalide")
+    else:
+        if user["school_status"] != "active":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Établissement suspendu ou inactif")
+        if token_school_id is None or int(token_school_id) != int(db_school_id):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Contexte établissement invalide")
-    elif token_school_id is not None and int(token_school_id) != int(db_school_id):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Contexte établissement invalide")
 
     return dict(user)
 
 
 def require_password_changed(current_user: dict = Depends(get_current_user)):
-    """Bloque l'accès tant que l'utilisateur n'a pas remplacé son mot de passe temporaire."""
     if current_user.get("must_change_password"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -139,24 +155,42 @@ def require_password_changed(current_user: dict = Depends(get_current_user)):
     return current_user
 
 
-def require_roles(
-    allowed_roles: List[str],
-    allow_password_change_pending: bool = False,
-):
-    def role_checker(current_user: dict = Depends(get_current_user)):
-        if current_user["role"] not in allowed_roles:
+def require_roles(allowed_roles: list[str]):
+    def _role_checker(current_user: dict = Depends(require_password_changed)) -> dict:
+        if current_user.get("role") not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Accès refusé pour le profil '{current_user['role']}'",
+                detail="Permissions insuffisantes pour cette opération.",
             )
-        if not allow_password_change_pending and current_user.get("must_change_password"):
+        if current_user.get("role") != "super_admin" and current_user.get("school_id") is None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Changement de mot de passe obligatoire avant d'accéder à la plateforme.",
+                detail="Aucun établissement rattaché à ce compte.",
             )
         return current_user
 
-    return role_checker
-def generate_secure_temp_password(length: int = 14) -> str:
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%"
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    return _role_checker
+
+
+def require_tenant_user(current_user: dict = Depends(require_password_changed)):
+    if current_user.get("school_id") is None or current_user.get("role") == "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Accès réservé aux utilisateurs rattachés à un établissement.",
+        )
+    return current_user
+
+
+def require_super_admin(current_user: dict = Depends(require_password_changed)):
+    if current_user.get("role") != "super_admin" or current_user.get("school_id") is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Accès strictement réservé au Super Administrateur de la plateforme.",
+        )
+    configured_sa = os.getenv("SUPER_ADMIN_EMAIL", "sendaslimenss@gmail.com").strip().lower()
+    if configured_sa and current_user.get("email", "").strip().lower() != configured_sa:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Compte Super Administrateur non autorisé.",
+        )
+    return current_user
